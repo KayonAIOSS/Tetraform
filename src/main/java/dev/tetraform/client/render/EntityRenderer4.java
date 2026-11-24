@@ -53,57 +53,69 @@ public final class EntityRenderer4 {
         Vec4 eye = Vec4.lerp(ClientState4.prevPos, ClientState4.pos, pt);
         double depth = m.depthOf(eye);
 
-        List<Poly> solid = new ArrayList<>();
-        for (ClientState4.EntityState es : ClientState4.ENTITIES.values()) {
-            Net4.EntityView now = es.now, prev = es.prev == null ? now : es.prev;
-            Entity4Type type = Entity4Type.VALUES[Math.floorMod(now.type(), Entity4Type.VALUES.length)];
-            Vec4 p = new Vec4(prev.x() + (now.x() - prev.x()) * pt, prev.y() + (now.y() - prev.y()) * pt,
-                    prev.z() + (now.z() - prev.z()) * pt, prev.w() + (now.w() - prev.w()) * pt);
-            if (Math.abs(m.depthOf(p) - depth) > 3) continue;
-            BlockState itemTex = null;
-            if (type == Entity4Type.ITEM) {
-                Item item = BuiltInRegistries.ITEM.byId(now.extra());
-                itemTex = item instanceof BlockItem bi ? bi.getBlock().defaultBlockState() : null;
-            }
-            SliceFrame body = composite(now.frame(), m);
-            double ccx = mp.renderX(p.x(), p.z(), p.w()), ccz = mp.renderZ(p.x(), p.z(), p.w());
-            Vec4 n = m.normal();
-            double localDepth = depth - (n.x() * p.x() + n.z() * p.z() + n.w() * p.w());
-            SLICER.setPlane(body, localDepth, cam.x - ccx, cam.z - ccz);
-            int color = now.hurt() > 0 ? 0xFFFF7070 : 0xFFFFFFFF;
-            int sky = p.y() + 1 >= ClientState4.LEVEL.heightAt((int) Math.floor(p.x()), (int) Math.floor(p.z()), (int) Math.floor(p.w())) ? 15 : 5;
-            int light = LightCoordsUtil.pack(type == Entity4Type.STALKER ? 7 : 0, sky);
-            double dy = p.y() - cam.y;
-            double scale = type != Entity4Type.ITEM && (now.extra() & 1) != 0 ? 0.55 : 1.0;
-            for (Entity4Type.Part part : type.parts(itemTex)) {
-                double[] b = part.box();
-                if (scale != 1.0) {
-                    b = b.clone();
-                    for (int i = 0; i < 8; i++) b[i] *= scale;
-                }
-                SpriteCache.Faces faces = SpriteCache.get(part.texture());
-                SLICER.slice(b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], 0xFF, 0, 0, 0, 0,
-                        (dir, cnt, pos, uv, nx, ny, nz) -> {
-                            float[] pp = new float[cnt * 3];
-                            for (int i = 0; i < cnt; i++) {
-                                pp[i * 3] = pos[i * 3];
-                                pp[i * 3 + 1] = (float) (pos[i * 3 + 1] + dy);
-                                pp[i * 3 + 2] = pos[i * 3 + 2];
-                            }
-                            float[] uu = normalizeUv(uv, cnt);
-                            SpriteCache.Layer l = faces.layers()[dir.ordinal()][0];
-                            int c = l.tint() == -1 ? color : mul(color, l.tint());
-                            solid.add(new Poly(l.sprite(), cnt, pp, uu, nx, ny, nz, c, light));
-                        });
-            }
-        }
-
         PoseStack ps = event.getPoseStack();
+        submitSelection(event, mp, depth, cam);
+    }
+
+    /**
+     * Slices one 4D entity's body with the viewer's hyperplane and submits it. Called from the proxy entity's
+     * renderer, so it runs in every pass a shader pack performs (including the shadow pass). {@code cam} must be
+     * the camera of the current pass; geometry is emitted camera-relative.
+     */
+    public static void submitBody(ClientState4.EntityState es, float pt, PoseStack ps,
+                                  net.minecraft.client.renderer.SubmitNodeCollector collector, Vec3 cam) {
+        if (es == null || es.now == null || !ClientState4.hasPos) return;
+        ClientState4.MeshParams mp = ClientState4.mesh;
+        SliceFrame m = mp.frame();
+        Vec4 eye = Vec4.lerp(ClientState4.prevPos, ClientState4.pos, pt);
+        double depth = m.depthOf(eye);
+        Net4.EntityView now = es.now, prev = es.prev == null ? now : es.prev;
+        Entity4Type type = Entity4Type.VALUES[Math.floorMod(now.type(), Entity4Type.VALUES.length)];
+        Vec4 p = new Vec4(prev.x() + (now.x() - prev.x()) * pt, prev.y() + (now.y() - prev.y()) * pt,
+                prev.z() + (now.z() - prev.z()) * pt, prev.w() + (now.w() - prev.w()) * pt);
+        if (Math.abs(m.depthOf(p) - depth) > 3) return;
+        BlockState itemTex = null;
+        if (type == Entity4Type.ITEM) {
+            Item item = BuiltInRegistries.ITEM.byId(now.extra());
+            itemTex = item instanceof BlockItem bi ? bi.getBlock().defaultBlockState() : null;
+        }
+        SliceFrame body = composite(now.frame(), m);
+        double ccx = mp.renderX(p.x(), p.z(), p.w()), ccz = mp.renderZ(p.x(), p.z(), p.w());
+        Vec4 n = m.normal();
+        double localDepth = depth - (n.x() * p.x() + n.z() * p.z() + n.w() * p.w());
+        Slicer slicer = new Slicer();
+        slicer.setPlane(body, localDepth, cam.x - ccx, cam.z - ccz);
+        int color = now.hurt() > 0 ? 0xFFFF7070 : 0xFFFFFFFF;
+        int sky = p.y() + 1 >= ClientState4.LEVEL.heightAt((int) Math.floor(p.x()), (int) Math.floor(p.z()), (int) Math.floor(p.w())) ? 15 : 5;
+        int light = LightCoordsUtil.pack(type == Entity4Type.STALKER ? 7 : 0, sky);
+        double dy = p.y() - cam.y;
+        double scale = type != Entity4Type.ITEM && (now.extra() & 1) != 0 ? 0.55 : 1.0;
+        List<Poly> solid = new ArrayList<>();
+        for (Entity4Type.Part part : type.parts(itemTex)) {
+            double[] b = part.box();
+            if (scale != 1.0) {
+                b = b.clone();
+                for (int i = 0; i < 8; i++) b[i] *= scale;
+            }
+            SpriteCache.Faces faces = SpriteCache.get(part.texture());
+            slicer.slice(b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], 0xFF, 0, 0, 0, 0,
+                    (dir, cnt, pos, uv, nx, ny, nz) -> {
+                        float[] pp = new float[cnt * 3];
+                        for (int i = 0; i < cnt; i++) {
+                            pp[i * 3] = pos[i * 3];
+                            pp[i * 3 + 1] = (float) (pos[i * 3 + 1] + dy);
+                            pp[i * 3 + 2] = pos[i * 3 + 2];
+                        }
+                        float[] uu = normalizeUv(uv, cnt);
+                        SpriteCache.Layer l = faces.layers()[dir.ordinal()][0];
+                        int c = l.tint() == -1 ? color : mul(color, l.tint());
+                        solid.add(new Poly(l.sprite(), cnt, pp, uu, nx, ny, nz, c, light));
+                    });
+        }
         if (!solid.isEmpty()) {
-            event.getSubmitNodeCollector().submitCustomGeometry(ps, RenderTypes.entityCutout(TextureAtlas.LOCATION_BLOCKS),
+            collector.submitCustomGeometry(ps, RenderTypes.entityCutout(TextureAtlas.LOCATION_BLOCKS),
                     (pose, buf) -> { for (Poly poly : solid) emit(pose, buf, poly); });
         }
-        submitSelection(event, mp, depth, cam);
     }
 
     private static void submitSelection(SubmitCustomGeometryEvent event, ClientState4.MeshParams mp, double depth, Vec3 cam) {

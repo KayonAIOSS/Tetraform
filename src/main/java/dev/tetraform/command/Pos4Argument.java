@@ -45,6 +45,8 @@ public final class Pos4Argument implements ArgumentType<Pos4Argument.Coords> {
 
     /** The executing entity's 4D position (players in the tesseract), else its vanilla position with w = 0. */
     public static Vec4 origin(CommandSourceStack src) {
+        Vec4 cb = dev.tetraform.world.BlockEntities4.COMMAND_ORIGIN.get();
+        if (cb != null && src.getEntity() == null) return cb;
         if (src.getEntity() instanceof ServerPlayer sp && Tetraform.is4D(sp.level())) {
             return ServerWorld4.state(sp).pos;
         }

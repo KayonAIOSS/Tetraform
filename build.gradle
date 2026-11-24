@@ -20,6 +20,10 @@ neoForge {
         client {
             client()
             gameDirectory = project.file('runs/client')
+            // Blaze3D strict validation only runs in dev; Iris trips it, so allow turning it off to match production.
+            if (project.hasProperty('noValidation')) {
+                systemProperty 'neoforge.disableBlaze3DValidation', 'true'
+            }
             if (project.hasProperty('autoJoin')) {
                 programArguments.addAll('--quickPlayMultiplayer', project.property('autoJoin').toString())
             }

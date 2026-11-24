@@ -77,6 +77,7 @@ public final class ClientNet4 {
             var player = Minecraft.getInstance().player;
             if (player != null) Movement4.mirror(player);
         });
+        e.register(Net4.OpenCommandBlock4S2C.TYPE, (p, ctx) -> CommandBlockScreen4.open(p));
         e.register(Net4.Impulse4S2C.TYPE, (p, ctx) -> Movement4.addImpulse(new Vec4(p.x(), p.y(), p.z(), p.w())));
     }
 

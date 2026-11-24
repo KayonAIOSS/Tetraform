@@ -21,11 +21,15 @@ public final class TetraformClient {
     public TetraformClient(IEventBus modBus, ModContainer container) {
         modBus.addListener(Keys4::register);
         modBus.addListener(ClientNet4::register);
+        modBus.addListener((net.neoforged.neoforge.client.event.EntityRenderersEvent.RegisterRenderers e) ->
+                e.registerEntityRenderer(Tetraform.PROXY4.get(), dev.tetraform.client.render.ProxyRenderer4::new));
         NeoForge.EVENT_BUS.addListener(SliceMesher::onAddSectionGeometry);
         NeoForge.EVENT_BUS.addListener(EntityRenderer4::onSubmit);
         NeoForge.EVENT_BUS.addListener(Interaction4::onInteraction);
         NeoForge.EVENT_BUS.addListener(Hud4::onRenderGui);
         NeoForge.EVENT_BUS.addListener(TetraformClient::onClientTick);
+        // after vanilla's entity tick, which would otherwise reset the proxies' interpolation start point
+        NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> Proxies4.tick());
         NeoForge.EVENT_BUS.addListener(TetraformClient::onMovementInput);
         NeoForge.EVENT_BUS.addListener(TetraformClient::onRenderPlayer);
         NeoForge.EVENT_BUS.addListener(TetraformClient::onLogout);
@@ -37,6 +41,7 @@ public final class TetraformClient {
         Minecraft mc = Minecraft.getInstance();
         boolean now = Tetraform.is4D(mc.level);
         if (ClientState4.active && !now) {
+            Proxies4.clear();
             ClientState4.reset();
             ClientNet4.clearPending();
         }

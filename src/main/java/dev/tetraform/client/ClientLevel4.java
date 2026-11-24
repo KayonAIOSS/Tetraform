@@ -15,6 +15,12 @@ public final class ClientLevel4 extends Level4 {
     /** Column key -> packed emitter list: {pos long, emission} pairs. */
     private final ConcurrentHashMap<Long, long[]> emitters = new ConcurrentHashMap<>();
     private volatile int maxY = 0;
+    /** Bumped whenever any block or column changes; part of the mesh-cache key. */
+    private final java.util.concurrent.atomic.AtomicLong epoch = new java.util.concurrent.atomic.AtomicLong();
+
+    public long epoch() {
+        return epoch.get();
+    }
     /**
      * Cached per-section face-exposure masks (bit i = face Direction4.VALUES[i] is visible), keyed by
      * column key * 16 + section y. The mesher reads these instead of doing 8 neighbour lookups per voxel; most
@@ -24,6 +30,7 @@ public final class ClientLevel4 extends Level4 {
 
     public void put(Column4 c) {
         columns.put(c.key(), c);
+        epoch.incrementAndGet();
         invalidateColumnAndNeighbours(c.cx, c.cz, c.cw);
         reindexEmitters(c);
         for (int sy = Column4.SECTIONS - 1; sy >= 0; sy--) {
@@ -38,6 +45,7 @@ public final class ClientLevel4 extends Level4 {
     public void remove(long key) {
         columns.remove(key);
         emitters.remove(key);
+        epoch.incrementAndGet();
         invalidateColumnAndNeighbours(Column4.keyX(key), Column4.keyZ(key), Column4.keyW(key));
     }
 
@@ -45,6 +53,8 @@ public final class ClientLevel4 extends Level4 {
         columns.clear();
         emitters.clear();
         exposure.clear();
+        epoch.incrementAndGet();
+        dev.tetraform.client.render.MeshCache.clear();
         maxY = 0;
     }
 
@@ -54,6 +64,7 @@ public final class ClientLevel4 extends Level4 {
 
     public BlockState setClient(BlockPos4 p, BlockState s) {
         BlockState old = setBlockRaw(p, s);
+        epoch.incrementAndGet();
         // the block itself and its eight neighbours may change exposure
         invalidateSection(p.x(), p.y(), p.z(), p.w());
         for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.VALUES) {

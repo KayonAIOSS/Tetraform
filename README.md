@@ -70,13 +70,15 @@ shape the same way.
 
 ### Sodium / Iris compatibility
 
-* There are no Sodium or Iris mixins. Terrain goes through the section-geometry event, which Sodium supports,
-  so Sodium's culling, meshing threads and draw batching apply to 4D terrain automatically.
-  **Tested with Sodium 0.9.3+mc26.3** (screenshots were taken with it installed).
-* Iris shades chunk-section geometry and vanilla entity render types, so shader packs, shadow pass included,
-  apply to the 4D world with no special handling. **Not tested yet.** The only Iris build for 26.3 is
-  1.11.7, which Sodium 0.9.3 rejects (it needs Iris ≥ 1.12.1). Sodium 0.9.2, the version Iris 1.11.7
-  accepts, crashes on NeoForge 26.3.0.116 on its own, before Tetraform does anything.
+**Supported pairing: Sodium 0.9.3-beta.1 + Iris 1.11.7** (the release Sodium 0.9.3 refuses Iris 1.11.7).
+Tested in-game with Complementary Reimagined r5.10:
+
+* There are no Sodium or Iris mixins. Terrain goes through the section-geometry event, so Sodium meshes, culls
+  and batches 4D terrain, and Iris shades it like normal terrain. **Terrain casts shadows.**
+* Mobs, items and other players are drawn by client-only proxy entities through the normal entity pipeline,
+  so shader packs include them in every pass. **4D creatures cast shadows too.**
+* Developers: Iris trips Blaze3D's strict validation, which only runs in dev environments. Use
+  `./gradlew runClient -PnoValidation` to match a production launcher.
 
 ## Performance
 
@@ -91,13 +93,31 @@ shape the same way.
   section, never O(16⁴). Faces are culled across all 8 directions. Slicing allocates nothing per face.
 * Remeshing happens only when the hyperplane changes. Axis-aligned slices change only when you cross an
   integer W. Block updates remesh only the sections they project into.
-* **Near-first remeshing:** while you rotate or move along W, only sections within 3 sections of you
-  rebuild each step. Everything else rebuilds once you stop for 0.2 s (and at least once a second).
-  Close terrain stays correct at full speed, and distant terrain catches up a moment later.
+* **Mesh cache (memory for speed):** finished section meshes are kept (up to a quarter of the heap, at most
+  3 GB) and keyed by slice angle, depth and offset. Snapping back to an angle you have used, or strafing back
+  along W, replays the stored geometry instead of slicing again. F3 shows its size.
+* **Bigger preload:** the full 4D neighbourhood within 3 columns (all of x, z and w) stays loaded, so rotating
+  into W or strafing along W doesn't wait for terrain to stream. `preloadRadius` in `tetraform-synced.toml`
+  goes up to 6 (4 suits 16 GB).
+* Lighting is calculated without per-face allocations, from only the light sources that can reach the section,
+  and non-cube block models are cached per state.
 * **Face-exposure cache:** each section caches which of its voxels' eight faces are visible. The mesher skips
   buried voxels without any neighbour lookups, and the cache only changes when nearby blocks do.
 * The server caps scheduled block ticks per tick (count and time), so big water or redstone events slow
   down instead of stalling the server.
+
+## Blocks you can use
+
+Right-click works like vanilla:
+
+* **Workstations:** crafting table, stonecutter, smithing table, loom, cartography table, grindstone, anvil and
+  enchanting table open their vanilla menus.
+* **Storage:** chests, barrels, ender chests, shulker boxes, dispensers, droppers and hoppers have persistent
+  inventories. They are saved next to each column, and their contents drop when the block is broken.
+* **Command blocks:** the vanilla command block screen, with impulse, repeat and chain modes, conditional and
+  always-active settings, redstone triggering and output tracking. `~ ~ ~ ~` in a command refers to the command
+  block's own 4D position, so `setblock ~ ~1 ~ ~ stone` works in any W.
+* Levers, buttons, doors, trapdoors, fence gates, TNT and buckets also work, as before.
 
 ## Controls
 
@@ -158,11 +178,8 @@ To build locally:
   Tetraform keys need to be set again.
 * Worlds created before this version can contain caves that open into lakes, and those can still flood if
   disturbed. New worlds don't have such caves.
-* Iris: terrain is ordinary chunk-section geometry, which the shadow pass renders, so terrain shadows should
-  work. Mobs, items and other players are drawn per frame through a separate path that the shadow pass doesn't
-  replay, so they cast no shadows. This could not be verified in-game yet: the only Iris build for 26.3 (1.11.7)
-  is rejected by Sodium 0.9.3 (it requires Iris ≥ 1.12.1). With Sodium 0.9.3-beta.3 it loads, but crashes
-  inside Iris itself (`CenterDepthSampler`) as soon as a shader pack is enabled.
+* Furnaces, smokers and blast furnaces can be placed but don't smelt yet. Dispensers, droppers and hoppers
+  store items but don't act on redstone yet. The enchanting table works without bookshelf power.
 
 ## Screenshots
 
@@ -175,6 +192,10 @@ These were rendered in-game with software OpenGL and Sodium 0.9.3, in a fresh *D
 | Real block models + vanilla outline | Water flowing downhill | Two players (multiplayer) |
 |---|---|---|
 | ![](docs/outline-models.png) | ![](docs/water.png) | ![](docs/multiplayer.png) |
+
+| Iris + Complementary: a Hyperhog casting a shadow | 4D command block | Crafting table |
+|---|---|---|
+| ![](docs/iris-mob-shadow.png) | ![](docs/command-block.png) | ![](docs/crafting.png) |
 
 | Ordinary slice (0.1.0) | A Stalker (sliced 4D body) |
 |---|---|

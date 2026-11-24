@@ -55,6 +55,12 @@ public final class Tetraform {
                     .isSuffocating((s, l, pos) -> false).isViewBlocking((s, l, pos, box) -> false)
                     .isRedstoneConductor((s, l, pos) -> false).sound(SoundType.EMPTY).noTerrainParticles());
 
+    public static final DeferredRegister.Entities ENTITIES = DeferredRegister.createEntities(MODID);
+    /** Client-only render proxy for 4D entities (see {@link dev.tetraform.entity.ProxyEntity4}). */
+    public static final DeferredHolder<net.minecraft.world.entity.EntityType<?>, net.minecraft.world.entity.EntityType<dev.tetraform.entity.ProxyEntity4>> PROXY4 =
+            ENTITIES.registerEntityType("proxy4", dev.tetraform.entity.ProxyEntity4::new, net.minecraft.world.entity.MobCategory.MISC,
+                    b -> b.sized(2.5f, 2.5f).noSave().noSummon().clientTrackingRange(0));
+
     public static final Supplier<AttachmentType<PlayerState4>> PLAYER4 = ATTACHMENTS.register("player4",
             () -> AttachmentType.serializable(PlayerState4::new).copyOnDeath().build());
 
@@ -68,6 +74,7 @@ public final class Tetraform {
         BLOCKS.register(modBus);
         ATTACHMENTS.register(modBus);
         ARGUMENTS.register(modBus);
+        ENTITIES.register(modBus);
         container.registerConfig(ModConfig.Type.SYNCED, Config4.SPEC);
         modBus.addListener(Net4::register);
         NeoForge.EVENT_BUS.register(ServerEvents4.class);

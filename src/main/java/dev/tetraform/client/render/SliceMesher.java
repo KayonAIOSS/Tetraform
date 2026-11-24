@@ -45,9 +45,18 @@ public final class SliceMesher {
         ClientLevel4 level = ClientState4.LEVEL;
         if (origin.getY() >= level.maxY() || origin.getY() < 0) return;
         ClientState4.MeshParams params = ClientState4.mesh;
+        SliceFrame f = params.frame();
+        MeshCache.Key key = new MeshCache.Key(origin.asLong(), MeshCache.Key.q(f.get(1, 1)), MeshCache.Key.q(f.get(2, 1)),
+                MeshCache.Key.q(params.depth()), MeshCache.Key.q(params.offX()), MeshCache.Key.q(params.offZ()), level.epoch());
+        MeshCache.Entry cached = MeshCache.get(key);
+        if (cached != null) {
+            if (!cached.layers.isEmpty()) event.addRenderer(ctx -> MeshCache.replay(cached, ctx));
+            return;
+        }
         event.addRenderer(ctx -> {
             try {
-                build(ctx, origin, params, level);
+                Sink sink = build(ctx, origin, params, level);
+                if (sink != null && level.epoch() == key.epoch()) MeshCache.put(key, MeshCache.entryFrom(sink.recorders));
             } catch (Throwable t) {
                 dev.tetraform.Tetraform.LOGGER.error("4D slice meshing failed for section {}", origin, t);
             }
@@ -57,21 +66,24 @@ public final class SliceMesher {
     private static final class Sink implements Slicer.FaceSink {
         AddSectionGeometryEvent.SectionRenderingContext ctx;
         final EnumMap<ChunkSectionLayer, VertexConsumer> buffers = new EnumMap<>(ChunkSectionLayer.class);
+        final EnumMap<ChunkSectionLayer, MeshCache.Recorder> recorders = new EnumMap<>(ChunkSectionLayer.class);
         BlockState state;
         SpriteCache.Faces faces;
         ClientLevel4 level;
         int vx, vy, vz, vw; // voxel
         int oy;
-        long[][] emitters;
+        int[] emitters;
+        int emitterCount;
         boolean modelPath;
         // mapping for model-rendered blocks (zw frames): render x = x + mox - ox, render z' = c*z + s*w + moz - oz
         double zc, zs, depth, relX, relZ;
-        final java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts = new java.util.ArrayList<>();
 
         VertexConsumer buffer(ChunkSectionLayer l) {
             VertexConsumer c = buffers.get(l);
             if (c == null) {
-                c = ctx.getOrCreateChunkBuffer(l);
+                MeshCache.Recorder r = new MeshCache.Recorder(ctx.getOrCreateChunkBuffer(l));
+                recorders.put(l, r);
+                c = r;
                 buffers.put(l, c);
             }
             return c;
@@ -117,15 +129,8 @@ public final class SliceMesher {
             float bx = (float) (x + relX), by = y - oy;
             float bz = (float) (u0 + relZ);
 
-            parts.clear();
-            var model = net.minecraft.client.Minecraft.getInstance().getModelManager().getBlockStateModelSet().get(s);
-            try {
-                model.collectParts(net.minecraft.util.RandomSource.create(
-                        (x * 3129871L) ^ (z * 116129781L) ^ (long) y ^ (w * 0x9E3779B97F4A7C15L)), parts);
-            } catch (Throwable t) {
-                return;
-            }
-            int light = net.minecraft.util.LightCoordsUtil.pack(blockLight(emitters, x, y, z, w, s.getLightEmission()), skyLight(level, x, y + 1, z, w));
+            var parts = SpriteCache.parts(s);
+            int light = net.minecraft.util.LightCoordsUtil.pack(blockLight(emitters, emitterCount, x, y, z, w, s.getLightEmission()), skyLight(level, x, y + 1, z, w));
             for (var part : parts) {
                 for (net.minecraft.core.Direction d3 : DIRS) {
                     for (var quad : part.getQuads(d3)) {
@@ -213,7 +218,7 @@ public final class SliceMesher {
             var sp = layer.sprite();
             int tint = layer.tint();
             VertexConsumer vc = buffer(layer.layer());
-            int light = net.minecraft.util.LightCoordsUtil.pack(blockLight(emitters, x, y, z, w, s.getLightEmission()), skyLight(level, x, y + 1, z, w));
+            int light = net.minecraft.util.LightCoordsUtil.pack(blockLight(emitters, emitterCount, x, y, z, w, s.getLightEmission()), skyLight(level, x, y + 1, z, w));
             float X0 = (float) (x + relX), X1 = X0 + 1, Y = y - oy;
             float U0 = (float) (segU0 + relZ), U1 = (float) (segU1 + relZ);
             if (topVisible) {
@@ -307,7 +312,7 @@ public final class SliceMesher {
 
         private int light(Direction4 dir, int emission) {
             int x = vx + dir.dx, y = vy + dir.dy, z = vz + dir.dz, w = vw + dir.dw;
-            return LightCoordsUtil.pack(blockLight(emitters, x, y, z, w, emission), skyLight(level, x, y, z, w));
+            return LightCoordsUtil.pack(blockLight(emitters, emitterCount, x, y, z, w, emission), skyLight(level, x, y, z, w));
         }
     }
 
@@ -315,6 +320,17 @@ public final class SliceMesher {
     public static int skyLight(ClientLevel4 level, int x, int y, int z, int w) {
         int h = level.heightAt(x, z, w);
         return y >= h ? 15 : Math.max(0, 15 - 3 * (h - y));
+    }
+
+    /** 4D block light from a flat {x, y, z, w, emission} list (allocation-free). */
+    public static int blockLight(int[] em, int count, int x, int y, int z, int w, int base) {
+        int block = base;
+        for (int i = 0; i < count; i += 5) {
+            int d = Math.abs(em[i] - x) + Math.abs(em[i + 1] - y) + Math.abs(em[i + 2] - z) + Math.abs(em[i + 3] - w);
+            int l = em[i + 4] - d;
+            if (l > block) block = l;
+        }
+        return Math.max(0, Math.min(15, block));
     }
 
     /** 4D block light: emitters attenuate by 4D Manhattan distance. */
@@ -363,7 +379,7 @@ public final class SliceMesher {
         return Math.min(1f, nx * nx * 0.6f + nz * nz * 0.8f + up * 1.0f + down * 0.5f);
     }
 
-    private static void build(AddSectionGeometryEvent.SectionRenderingContext ctx, BlockPos origin, ClientState4.MeshParams params, ClientLevel4 level) {
+    private static Sink build(AddSectionGeometryEvent.SectionRenderingContext ctx, BlockPos origin, ClientState4.MeshParams params, ClientLevel4 level) {
         SliceFrame f = params.frame();
         double depth = params.depth();
         int ox = origin.getX(), oy = origin.getY(), oz = origin.getZ();
@@ -403,7 +419,7 @@ public final class SliceMesher {
         boolean zwFrame = Math.abs(f.get(0, 0) - 1) < 1.0E-9 && Math.abs(f.normalX()) < 1.0E-9;
         sink.modelPath = zwFrame;
 
-        // gather light emitters from nearby columns
+        // gather light emitters that can reach this section (flat int list, filtered by distance)
         java.util.ArrayList<long[]> em = new java.util.ArrayList<>();
         int cxa = Math.floorDiv((int) Math.floor(Math.min(lo[0], hi[0])) - 15, 16), cxb = Math.floorDiv((int) Math.floor(hi[0]) + 15, 16);
         int cza = Math.floorDiv((int) Math.floor(lo[1]) - 15, 16), czb = Math.floorDiv((int) Math.floor(hi[1]) + 15, 16);
@@ -414,7 +430,19 @@ public final class SliceMesher {
                 if (list != null) em.add(list);
             }
         }
-        sink.emitters = em.isEmpty() ? null : em.toArray(new long[0][]);
+        int[] flat = new int[0];
+        int fn = 0;
+        for (long[] list : em) {
+            for (int i = 0; i < list.length; i += 2) {
+                BlockPos4 e = BlockPos4.of(list[i]);
+                if (e.x() < lo[0] - 16 || e.x() > hi[0] + 16 || e.z() < lo[1] - 16 || e.z() > hi[1] + 16
+                        || e.w() < lo[2] - 16 || e.w() > hi[2] + 16 || e.y() < oy - 16 || e.y() > oy + 32) continue;
+                if (fn + 5 > flat.length) flat = java.util.Arrays.copyOf(flat, Math.max(20, flat.length * 2));
+                flat[fn++] = e.x(); flat[fn++] = e.y(); flat[fn++] = e.z(); flat[fn++] = e.w(); flat[fn++] = (int) list[i + 1];
+            }
+        }
+        sink.emitters = flat;
+        sink.emitterCount = fn;
 
         int[] idx = new int[3];
         int yTop = Math.min(oy + 16, Column4.HEIGHT);
@@ -444,6 +472,7 @@ public final class SliceMesher {
                 }
             }
         }
+        return sink;
     }
 
     private static void meshColumnRun(Slicer slicer, Sink sink, ClientLevel4 level, Column4 col, int x, int z, int w, int y0, int y1) {

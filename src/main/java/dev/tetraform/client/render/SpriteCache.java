@@ -41,6 +41,9 @@ public final class SpriteCache {
             synchronized (SpriteCache.class) {
                 if (set != cachedFor) {
                     cache = new Faces[Block.BLOCK_STATE_REGISTRY.size()];
+                    PARTS.clear();
+                    TINTS.clear();
+                    MeshCache.clear();
                     cachedFor = set;
                 }
             }
@@ -108,6 +111,22 @@ public final class SpriteCache {
             layers[d.ordinal()] = out.toArray(new Layer[0]);
         }
         return new Faces(layers);
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<BlockState, List<BlockStateModelPart>> PARTS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Baked model parts of a state (first random variant), cached so meshing does not re-collect them per block. */
+    @SuppressWarnings("deprecation")
+    public static List<BlockStateModelPart> parts(BlockState state) {
+        get(state); // keeps the cache keyed to the current model set
+        return PARTS.computeIfAbsent(state, st -> {
+            List<BlockStateModelPart> out = new ArrayList<>();
+            try {
+                Minecraft.getInstance().getModelManager().getBlockStateModelSet().get(st).collectParts(RandomSource.create(42L), out);
+            } catch (Throwable ignored) {
+            }
+            return List.copyOf(out);
+        });
     }
 
     private static final java.util.concurrent.ConcurrentHashMap<Long, Integer> TINTS = new java.util.concurrent.ConcurrentHashMap<>();

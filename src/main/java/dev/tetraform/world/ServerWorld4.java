@@ -49,6 +49,7 @@ public final class ServerWorld4 {
     private final Map<Long, Long> lastNeeded = new HashMap<>();
     private final Map<UUID, Tracker> trackers = new HashMap<>();
     private final Map<Integer, Entity4> entities = new LinkedHashMap<>();
+    private final Map<Long, BlockEntities4.BE4> blockEntities = new HashMap<>();
     private final Set<Long> changedBlocks = new LinkedHashSet<>();
     private final PriorityQueue<Scheduled> scheduled = new PriorityQueue<>();
     private final Set<Long> scheduledKeys = new HashSet<>();
@@ -286,6 +287,7 @@ public final class ServerWorld4 {
         CompletableFuture<Column4> f = loading.remove(key);
         c = f != null ? f.join() : loadOrGenerate(cx, cz, cw);
         level4.columns.put(key, c);
+        loadBlockEntities(c);
         resumeFluids(c);
         lastNeeded.put(key, tick);
         return c;
@@ -311,7 +313,7 @@ public final class ServerWorld4 {
 
     private void request(long key) {
         if (level4.columns.containsKey(key) || loading.containsKey(key)) return;
-        if (loading.size() > 96) return;
+        if (loading.size() > 256) return;
         int cx = Column4.keyX(key), cz = Column4.keyZ(key), cw = Column4.keyW(key);
         loading.put(key, CompletableFuture.supplyAsync(() -> loadOrGenerate(cx, cz, cw), workers));
     }
@@ -325,7 +327,10 @@ public final class ServerWorld4 {
             it.remove();
             try {
                 Column4 c = e.getValue().join();
-                if (level4.columns.putIfAbsent(e.getKey(), c) == null) resumeFluids(c);
+                if (level4.columns.putIfAbsent(e.getKey(), c) == null) {
+                    loadBlockEntities(c);
+                    resumeFluids(c);
+                }
             } catch (Exception ex) {
                 Tetraform.LOGGER.error("4D column generation failed", ex);
             }
@@ -417,11 +422,88 @@ public final class ServerWorld4 {
         BlockState old = c.set(p.x() & 15, p.y(), p.z() & 15, p.w() & 15, state);
         if (old == state) return false;
         changedBlocks.add(p.asLong());
+        boolean keepEntity = old.getBlock() instanceof net.minecraft.world.level.block.CommandBlock
+                && state.getBlock() instanceof net.minecraft.world.level.block.CommandBlock;
+        if (old.getBlock() != state.getBlock() && !keepEntity) {
+            BlockEntities4.BE4 be = blockEntities.remove(p.asLong());
+            if (be instanceof BlockEntities4.Container4 ct) {
+                for (int i = 0; i < ct.inventory.getContainerSize(); i++) dropItem(p.center(), ct.inventory.getItem(i));
+            }
+            if (BlockEntities4.needsEntity(state)) attach(BlockEntities4.create(p, state), c);
+        }
         if (notify) {
             behaviors.onChanged(p, old, state);
             for (Direction4 d : Direction4.VALUES) behaviors.neighborChanged(p.relative(d), p);
         }
         return true;
+    }
+
+    public BlockEntities4.BE4 blockEntity(BlockPos4 p) {
+        return blockEntities.get(p.asLong());
+    }
+
+    /** The block entity at p, created on demand for blocks that need one (e.g. placed before this existed). */
+    public BlockEntities4.BE4 blockEntityOrCreate(BlockPos4 p) {
+        BlockEntities4.BE4 be = blockEntities.get(p.asLong());
+        if (be == null && BlockEntities4.needsEntity(getBlock(p))) {
+            Column4 c = level4.getColumnAt(p.x(), p.z(), p.w());
+            if (c != null) {
+                be = BlockEntities4.create(p, getBlock(p));
+                attach(be, c);
+            }
+        }
+        return be;
+    }
+
+    private void attach(BlockEntities4.BE4 be, Column4 c) {
+        if (be == null) return;
+        be.onChange = () -> c.setDirty(true);
+        blockEntities.put(be.pos.asLong(), be);
+        c.setDirty(true);
+    }
+
+    private Path entityFile(long key) {
+        return dir.resolve("c." + Column4.keyX(key) + "." + Column4.keyZ(key) + "." + Column4.keyW(key) + ".be");
+    }
+
+    private void loadBlockEntities(Column4 c) {
+        Path f = entityFile(c.key());
+        if (!Files.exists(f)) return;
+        try {
+            net.minecraft.nbt.CompoundTag root = net.minecraft.nbt.NbtIo.readCompressed(f, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+            net.minecraft.nbt.ListTag list = root.getListOrEmpty("entries");
+            for (int i = 0; i < list.size(); i++) {
+                net.minecraft.nbt.CompoundTag e = list.getCompoundOrEmpty(i);
+                BlockPos4 p = BlockPos4.of(e.getLongOr("pos", 0));
+                BlockEntities4.BE4 be = BlockEntities4.create(p, e.getStringOr("type", ""));
+                if (be == null) continue;
+                be.load(net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING,
+                        server.registryAccess(), e.getCompoundOrEmpty("data")));
+                be.onChange = () -> c.setDirty(true);
+                blockEntities.put(p.asLong(), be);
+            }
+        } catch (Exception ex) {
+            Tetraform.LOGGER.error("Failed to load 4D block entities {}", f, ex);
+        }
+    }
+
+    private net.minecraft.nbt.CompoundTag saveBlockEntities(Column4 c) {
+        net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+        int bx = c.cx, bz = c.cz, bw = c.cw;
+        for (BlockEntities4.BE4 be : blockEntities.values()) {
+            if (be.pos.x() >> 4 != bx || be.pos.z() >> 4 != bz || be.pos.w() >> 4 != bw) continue;
+            var out = net.minecraft.world.level.storage.TagValueOutput.createWithContext(net.minecraft.util.ProblemReporter.DISCARDING, server.registryAccess());
+            be.save(out);
+            net.minecraft.nbt.CompoundTag e = new net.minecraft.nbt.CompoundTag();
+            e.putLong("pos", be.pos.asLong());
+            e.putString("type", be.type());
+            e.put("data", out.buildResult());
+            list.add(e);
+        }
+        if (list.isEmpty()) return null;
+        net.minecraft.nbt.CompoundTag root = new net.minecraft.nbt.CompoundTag();
+        root.put("entries", list);
+        return root;
     }
 
     public void schedule(BlockPos4 p, int delay) {
@@ -566,6 +648,37 @@ public final class ServerWorld4 {
 
     // ------------------------------------------------------------------ actions
 
+    /** Saves edits from the command block screen (mode switches swap the block type but keep the command). */
+    public static void handleSetCommandBlock(ServerPlayer p, Net4.SetCommandBlock4C2S m) {
+        ServerWorld4 w = get(p.level());
+        if (w == null || !p.canUseGameMasterBlocks()) return;
+        BlockPos4 pos = BlockPos4.of(m.pos());
+        if (state(p).pos.distance(pos.center()) > 10) return;
+        BlockState old = w.getBlock(pos);
+        if (!(old.getBlock() instanceof net.minecraft.world.level.block.CommandBlock)) return;
+        var modes = net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.values();
+        var mode = modes[Math.floorMod(m.mode(), modes.length)];
+        net.minecraft.world.level.block.Block nb = switch (mode) {
+            case SEQUENCE -> net.minecraft.world.level.block.Blocks.CHAIN_COMMAND_BLOCK;
+            case AUTO -> net.minecraft.world.level.block.Blocks.REPEATING_COMMAND_BLOCK;
+            case REDSTONE -> net.minecraft.world.level.block.Blocks.COMMAND_BLOCK;
+        };
+        BlockState ns = nb.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.CommandBlock.FACING, old.getValue(net.minecraft.world.level.block.CommandBlock.FACING))
+                .setValue(net.minecraft.world.level.block.CommandBlock.CONDITIONAL, m.conditional());
+        if (!(w.blockEntityOrCreate(pos) instanceof BlockEntities4.CommandBlock4 cb)) return;
+        w.setBlock(pos, ns, false);
+        cb.commandBlock.setCommand(m.command());
+        cb.commandBlock.setTrackOutput(m.trackOutput());
+        if (!m.trackOutput()) cb.commandBlock.setLastOutput(null);
+        cb.auto = m.auto();
+        cb.markChanged();
+        if (mode != net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.SEQUENCE && (cb.auto || cb.powered)) w.schedule(pos, 1);
+        if (!m.command().isEmpty()) {
+            p.sendSystemMessage(net.minecraft.network.chat.Component.translatable("advMode.setCommand.success", m.command()));
+        }
+    }
+
     public static void handleAction(ServerPlayer p, Net4.Action4C2S a) {
         ServerWorld4 w = get(p.level());
         if (w != null) w.behaviors.handleAction(p, a);
@@ -595,6 +708,8 @@ public final class ServerWorld4 {
             Long last = lastNeeded.get(e.getKey());
             if (last != null && tick - last < 600) continue;
             saveColumn(e.getValue(), false);
+            Column4 uc = e.getValue();
+            blockEntities.values().removeIf(be -> be.pos.x() >> 4 == uc.cx && be.pos.z() >> 4 == uc.cz && be.pos.w() >> 4 == uc.cw);
             it.remove();
             lastNeeded.remove(e.getKey());
         }
@@ -605,8 +720,12 @@ public final class ServerWorld4 {
         c.setDirty(false);
         byte[] data = c.toBytes();
         Path f = columnFile(c.key());
+        net.minecraft.nbt.CompoundTag bes = saveBlockEntities(c);
+        Path bf = entityFile(c.key());
         Runnable write = () -> {
             try {
+                if (bes != null) net.minecraft.nbt.NbtIo.writeCompressed(bes, bf);
+                else Files.deleteIfExists(bf);
                 Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
                 Files.write(tmp, data);
                 Files.move(tmp, f, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);

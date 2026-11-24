@@ -123,7 +123,30 @@ public final class Net4 {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /** Opens the vanilla command block screen for a 4D command block. */
+    public record OpenCommandBlock4S2C(long pos, int state, String command, boolean trackOutput, String lastOutput, boolean auto) implements CustomPacketPayload {
+        public static final Type<OpenCommandBlock4S2C> TYPE = typeOf("open_command_block");
+        public static final StreamCodec<RegistryFriendlyByteBuf, OpenCommandBlock4S2C> CODEC = StreamCodec.of(
+                (buf, v) -> {
+                    buf.writeLong(v.pos); buf.writeVarInt(v.state); buf.writeUtf(v.command, 32767);
+                    buf.writeBoolean(v.trackOutput); buf.writeUtf(v.lastOutput, 32767); buf.writeBoolean(v.auto);
+                },
+                buf -> new OpenCommandBlock4S2C(buf.readLong(), buf.readVarInt(), buf.readUtf(32767), buf.readBoolean(), buf.readUtf(32767), buf.readBoolean()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     // ---------------------------------------------------------------- server-bound
+
+    public record SetCommandBlock4C2S(long pos, String command, int mode, boolean trackOutput, boolean conditional, boolean auto) implements CustomPacketPayload {
+        public static final Type<SetCommandBlock4C2S> TYPE = typeOf("set_command_block");
+        public static final StreamCodec<RegistryFriendlyByteBuf, SetCommandBlock4C2S> CODEC = StreamCodec.of(
+                (buf, v) -> {
+                    buf.writeLong(v.pos); buf.writeUtf(v.command, 32767); buf.writeVarInt(v.mode);
+                    buf.writeBoolean(v.trackOutput); buf.writeBoolean(v.conditional); buf.writeBoolean(v.auto);
+                },
+                buf -> new SetCommandBlock4C2S(buf.readLong(), buf.readUtf(32767), buf.readVarInt(), buf.readBoolean(), buf.readBoolean(), buf.readBoolean()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
 
     public record Move4C2S(double x, double y, double z, double w, double[] frame, boolean onGround) implements CustomPacketPayload {
         public static final Type<Move4C2S> TYPE = typeOf("move4");
@@ -180,6 +203,10 @@ public final class Net4 {
         r.playToClient(EntitiesS2C.TYPE, EntitiesS2C.CODEC);
         r.playToClient(Teleport4S2C.TYPE, Teleport4S2C.CODEC);
         r.playToClient(Impulse4S2C.TYPE, Impulse4S2C.CODEC);
+        r.playToClient(OpenCommandBlock4S2C.TYPE, OpenCommandBlock4S2C.CODEC);
+        r.playToServer(SetCommandBlock4C2S.TYPE, SetCommandBlock4C2S.CODEC, (p, ctx) -> {
+            if (ctx.player() instanceof ServerPlayer sp) ServerWorld4.handleSetCommandBlock(sp, p);
+        });
         r.playToServer(Move4C2S.TYPE, Move4C2S.CODEC, (p, ctx) -> {
             if (ctx.player() instanceof ServerPlayer sp) ServerWorld4.handleMove(sp, p);
         });
