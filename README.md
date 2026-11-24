@@ -19,8 +19,9 @@ worlds created before the mod was installed.
 | **Physics** | Swept hyperbox collision on all four axes, with step-up, gravity, swimming and creative flight. |
 | **Redstone** | Dust networks connect along all 6 horizontal directions (x, z **and w**) plus up and down steps. Levers, buttons, redstone blocks, torches, lamps and conductive blocks all work. |
 | **Fluids / gravity / TNT** | Water and lava spread in 6 horizontal directions, form infinite sources and mix into obsidian and cobblestone. Sand and gravel fall. TNT blows up a 4D hyperball. |
-| **Mobs** | Hyperhogs (passive, with 8 legs, one per (x′, z′, w′) corner) and Stalkers (hostile). Their AI wanders, chases and flees in random 4D directions. Their orientation is a full rotation of the (x, z, w) space, and they turn smoothly through W toward where they walk. |
-| **Commands** | 4 numbers per coordinate: `/setblock x y z w <block>`, `/fill x1 y1 z1 w1 x2 y2 z2 w2 <block> [replace\|keep\|hollow\|outline]` (**8** numbers), `/clone`, `/tp x y z w [yaw pitch zw]`, `/tp <players> x y z w [yaw pitch zw]`, `/summon tetraform:hyperhog x y z w`. `~` relative coordinates work. The 3-coordinate vanilla forms still work. |
+| **Creatures** | **Every vanilla creature** (animals, monsters, villagers, iron golems) and every item entity has a W coordinate. Each one runs its normal vanilla AI inside its own x-y-z slice, so pathfinding, line of sight, sun burning and doors all work against the 4D world. Creatures drift into neighbouring W layers now and then, and a hunting monster lines its W up with its target. They are drawn with their **vanilla models** (player skins and skin-layer mods included). They only see, attack and collide with things in their own slice. Your W rotation changes only what you see: when you snap ana with `Z`, a cow looking at you doesn't appear to turn. Walk forward and you leave its slice, so it disappears. |
+| **Structures** | Vanilla **villages** (built from vanilla's own template pools, with villagers, golems and animals), **ruined portals**, **igloos** and **shipwrecks**. Each one takes two of the horizontal axes as its basis: template x/z become (x, z), (z, x), (x, w) or (w, x), and it is one layer thick along the remaining axis. An x-w village is seen whole at zw 90°; a transposed one comes out mirrored. |
+| **Commands** | 4 numbers per coordinate: `/setblock x y z w <block>`, `/fill x1 y1 z1 w1 x2 y2 z2 w2 <block> [replace\|keep\|hollow\|outline]` (**8** numbers), `/clone`, `/tp x y z w [yaw pitch zw]`, `/tp <players> x y z w [yaw pitch zw]`, `/summon <any entity> x y z w [nbt]`. `~` relative coordinates work. The 3-coordinate vanilla forms still work. |
 | **Movement** | Vanilla's physics model ported to 4D: the same acceleration, friction, gravity order (a jump clears a full block), sprint-jump and sneak. Input is normalised across all three horizontal axes, so diagonals and W-strafing are never faster. |
 | **Fluids** | Rendered like vanilla, with sloped, smoothly connected surfaces (each corner averages its 4D neighbours). Flow follows vanilla's "toward the nearest drop" rule and drains when the source is removed. Caves are generated so they never open into lakes. |
 
@@ -55,10 +56,14 @@ vertical rectangles from the x, z and w cells, and 3- to 6-gons from the top and
 form a closed polyhedron. Unit tests check closure with the divergence theorem and check the back-face winding.
 The faces are emitted through NeoForge's `AddSectionGeometryEvent` into **normal chunk-section meshes**, with
 real block textures from the baked models (grass overlays and tints included), directional shading for any
-normal (W faces included), 4D sky light from the 3D heightmap, and block light from 4D emitters.
+normal (W faces included), 4D sky light and block light from 4D emitters.
 
-Mobs, items and other players are sliced every frame, exactly in their own rotated frames. They are submitted
-through vanilla entity render types.
+Sky light passes through leaves, glass, plants and water, and it spreads sideways under solid cover, one level
+per block across all three horizontal axes (x, z and w). The ground under a tree stays lit; the ground under a
+roof darkens toward the middle.
+
+Creatures, items and other players are vanilla entities rendered by vanilla renderers. Each one is placed at its
+position inside your slice, and it is hidden when its body doesn't cross your slice.
 
 ### Blocks with real models
 
@@ -75,8 +80,9 @@ Tested in-game with Complementary Reimagined r5.10:
 
 * There are no Sodium or Iris mixins. Terrain goes through the section-geometry event, so Sodium meshes, culls
   and batches 4D terrain, and Iris shades it like normal terrain. **Terrain casts shadows.**
-* Mobs, items and other players are drawn by client-only proxy entities through the normal entity pipeline,
-  so shader packs include them in every pass. **4D creatures cast shadows too.**
+* Creatures, items and other players are ordinary vanilla entities in the normal entity pipeline, so shader
+  packs include them in every pass. (Entity shadows were verified with the earlier proxy renderer; this
+  version uses vanilla entities directly and was only re-tested with shaders off.)
 * Developers: Iris trips Blaze3D's strict validation, which only runs in dev environments. Use
   `./gradlew runClient -PnoValidation` to match a production launcher.
 
@@ -131,7 +137,7 @@ mouse button. They work out of the box:
 | `Z` / `X` / `C` / `B` | Snap the W rotation to 270° ("left"), 0° ("forward"), 90° ("right"), 180° ("backward") |
 | `R` / `V` | Strafe ana / kata along the hidden axis. Like A/D, this follows your view: from the spawn orientation it is +W / −W, and it turns with the zw rotation. |
 | Middle click | Pick block (vanilla rules: hotbar, then inventory, then creative supply) |
-| Right click a mob | Hyperhogs eat carrots, potatoes and beetroot: this heals them, and two fed hogs make a (smaller) baby |
+| Left / right click a creature | Vanilla attack and interaction: breeding, trading, shearing, milking, riding… |
 
 Vanilla also binds `X` and `C` (creative toolbar load/save activators), and Iris binds `R` (reload shaders),
 so the Controls screen flags those conflicts; rebind whichever you prefer.
@@ -140,12 +146,16 @@ so the Controls screen flags those conflicts; rebind whichever you prefer.
 `XYZW`, `Block x y z w`, `Chunk cx cy cz cw`, `Facing: ana (Towards positive W) (yaw / pitch / zw)`, a `Slice`
 line (zw angle, hyperplane normal, depth), 4D section-relative coordinates, the targeted 4D block and face,
 4D light, the 4D surface height and the terrain type. A dial in the top-right corner shows zw (red), yaw (blue) and pitch
-(green).
+(green). F3 also counts the entities in your slice.
+
+**The compass** works the same way as the dial: a larger blue needle points to its target (spawn or a lodestone)
+inside your current slice, and a red needle in front of it shows the zw rotation.
 
 Pressing a 4D control in a 3D world shows a hint explaining why nothing happens.
 
 Commands: `/tp x y z w [yaw pitch zw]` (each rotation accepts `~`), `/tetra enter`, `/tetra leave`, `/tetra where`,
-`/tetra rotate <deg>` (adds to zw), `/tetra reset`, `/tetra explode x y z w [power]`, `/tetra killmobs`. These are
+`/tetra rotate <deg>` (adds to zw), `/tetra reset`, `/tetra explode x y z w [power]`,
+`/tetra locate [village|ruined_portal|igloo|shipwreck]` (prints the structure's plane and 4D position). These are
 debug helpers: `/tetra fluids` (fluid counts nearby), `/tetra probe x y z w` (a block and its 8 neighbours) and
 `/tetra trace x y z w` (follows a flow back to whatever feeds it).
 
@@ -170,8 +180,11 @@ To build locally:
   containers with GUIs, crops) are placed and rendered, but they have no 4D behaviour yet.
 * Non-cube shapes are lifted to hyperboxes (slabs span the full W range; torches and posts are thin in W),
   rendered with the face sprite of their model. They are not rendered with their full 3D model.
-* Lighting is approximate: sky light comes from the 4D heightmap, and block light from emitters by 4D
-  Manhattan distance. It is not a full flood fill.
+* Lighting is approximate: sky light uses the 4D canopy and spreads up to 4 blocks sideways, and block light
+  comes from emitters by 4D Manhattan distance. It is not a full flood fill.
+* Structures appear only in terrain generated with this version. Chests in structures are empty (no loot
+  tables yet), structure processors (mossy variation, crops) are skipped, and villagers have no beds or job
+  sites to claim, so they just wander. Maps are not 4D-aware.
 * While zw changes, all visible sections rebuild (the chunk mesher has no per-frame path). With Sodium this
   is quick, but during fast turns, distant sections can lag a moment behind nearby ones.
 * Upgrading from 0.1.0: the key-binding ids changed so the new defaults apply; earlier custom bindings for
@@ -193,10 +206,14 @@ These were rendered in-game with software OpenGL and Sodium 0.9.3, in a fresh *D
 |---|---|---|
 | ![](docs/outline-models.png) | ![](docs/water.png) | ![](docs/multiplayer.png) |
 
-| Iris + Complementary: a Hyperhog casting a shadow | 4D command block | Crafting table |
+| Vanilla cow and villager in your slice | An x-z plane village | The compass (zw 50°) |
+|---|---|---|
+| ![](docs/vanilla-mobs.png) | ![](docs/village.png) | ![](docs/compass.png) |
+
+| Iris + Complementary: a (0.2) Hyperhog casting a shadow | 4D command block | Crafting table |
 |---|---|---|
 | ![](docs/iris-mob-shadow.png) | ![](docs/command-block.png) | ![](docs/crafting.png) |
 
-| Ordinary slice (0.1.0) | A Stalker (sliced 4D body) |
-|---|---|
-| ![](docs/slice-xyz.png) | ![](docs/stalker.png) |
+| Ordinary slice (0.1.0) |
+|---|
+| ![](docs/slice-xyz.png) |

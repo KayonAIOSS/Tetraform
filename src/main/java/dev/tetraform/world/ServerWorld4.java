@@ -679,7 +679,9 @@ public final class ServerWorld4 {
         Double target = wTargets.get(mob);
         net.minecraft.world.entity.LivingEntity t = mob.getTarget();
         if (t != null && Math.abs(W4.get(t) - w) > 0.02) target = W4.get(t);
-        if (target == null && mob.getNavigation().isDone() && random.nextInt(400) == 0) {
+        // villagers and golems stay with their village's layer; other creatures drift through W now and then
+        boolean homebody = mob instanceof net.minecraft.world.entity.npc.villager.AbstractVillager || mob instanceof net.minecraft.world.entity.animal.golem.IronGolem;
+        if (target == null && !homebody && mob.getNavigation().isDone() && random.nextInt(1200) == 0) {
             double nw = Math.floor(w) + 0.5 + (random.nextBoolean() ? 1 : -1);
             if (roomAt(mob, nw)) target = nw;
         }
