@@ -23,13 +23,31 @@ public final class ClientState4 {
     public static boolean onGround;
     public static boolean waitingForTerrain = true;
 
-    /** Live orientation of the slice (physics and look). */
+    /** Live orientation of the slice (physics and look): the world z axis rotated into w by {@link #zw}. */
     public static final SliceFrame FRAME = new SliceFrame();
+    /** The zw rotation angle in radians, kept in [0, 2pi). */
+    public static double zw;
 
-    /** Snapshot that terrain meshes were built with. Read by mesh worker threads through {@link MeshParams}. */
-    public static volatile MeshParams mesh = new MeshParams(new SliceFrame(), 0.5, 0);
+    /**
+     * Snapshot that terrain meshes were built with (read by mesh worker threads). Render-space coordinates are
+     * {@code x' = frame.localX(p) + offX}, {@code y' = y}, {@code z' = frame.localZ(p) + offZ}. The offsets are
+     * chosen when the frame changes so that the player stays put on screen while the slice rotates.
+     */
+    public static volatile MeshParams mesh = new MeshParams(new SliceFrame(), 0.5, 0, 0, 0);
 
-    public record MeshParams(SliceFrame frame, double depth, int version) {}
+    public record MeshParams(SliceFrame frame, double depth, double offX, double offZ, int version) {
+        public double renderX(double x, double z, double w) { return frame.localX(x, z, w) + offX; }
+        public double renderZ(double x, double z, double w) { return frame.localZ(x, z, w) + offZ; }
+    }
+
+    public static void setZW(double angle) {
+        double twoPi = Math.PI * 2;
+        zw = ((angle % twoPi) + twoPi) % twoPi;
+        // snap to exact quarter turns so axis-aligned views are exactly axis-aligned
+        double q = zw / (Math.PI / 2);
+        if (Math.abs(q - Math.rint(q)) < 1.0E-9) zw = Math.rint(q) * (Math.PI / 2) % twoPi;
+        FRAME.set(SliceFrame.zw(zw));
+    }
 
     // targeting
     public static Level4.Hit target;

@@ -66,7 +66,7 @@ public final class EntityRenderer4 {
                 itemTex = item instanceof BlockItem bi ? bi.getBlock().defaultBlockState() : null;
             }
             SliceFrame body = composite(now.frame(), m);
-            double ccx = m.localX(p.x(), p.z(), p.w()), ccz = m.localZ(p.x(), p.z(), p.w());
+            double ccx = mp.renderX(p.x(), p.z(), p.w()), ccz = mp.renderZ(p.x(), p.z(), p.w());
             Vec4 n = m.normal();
             double localDepth = depth - (n.x() * p.x() + n.z() * p.z() + n.w() * p.w());
             SLICER.setPlane(body, localDepth, cam.x - ccx, cam.z - ccz);
@@ -98,10 +98,11 @@ public final class EntityRenderer4 {
             event.getSubmitNodeCollector().submitCustomGeometry(ps, RenderTypes.entityCutout(TextureAtlas.LOCATION_BLOCKS),
                     (pose, buf) -> { for (Poly poly : solid) emit(pose, buf, poly); });
         }
-        submitSelection(event, m, depth, cam);
+        submitSelection(event, mp, depth, cam);
     }
 
-    private static void submitSelection(SubmitCustomGeometryEvent event, SliceFrame m, double depth, Vec3 cam) {
+    private static void submitSelection(SubmitCustomGeometryEvent event, ClientState4.MeshParams mp, double depth, Vec3 cam) {
+        SliceFrame m = mp.frame();
         var hit = ClientState4.target;
         if (hit == null || ClientState4.targetEntity >= 0) return;
         BlockPos4 bp = hit.pos();
@@ -112,7 +113,7 @@ public final class EntityRenderer4 {
         TextureAtlasSprite white = SpriteCache.get(Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.WHITE).defaultBlockState()).layers()[0][0].sprite();
         List<Poly> polys = new ArrayList<>();
         List<Poly> crack = new ArrayList<>();
-        SLICER.setPlane(m, depth, cam.x, cam.z);
+        SLICER.setPlane(m, depth, cam.x - mp.offX(), cam.z - mp.offZ());
         double dy = -cam.y;
         SLICER.slice(bp.x() + b[0] - e, bp.y() + b[1] - e, bp.z() + b[2] - e, bp.w() + b[3] - e,
                 bp.x() + b[4] + e, bp.y() + b[5] + e, bp.z() + b[6] + e, bp.w() + b[7] + e, 0xFF, bp.x(), bp.y(), bp.z(), bp.w(),

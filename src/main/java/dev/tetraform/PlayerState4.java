@@ -11,6 +11,8 @@ public final class PlayerState4 implements ValueIOSerializable {
     public Vec4 pos = new Vec4(0.5, 100, 0.5, 0.5);
     public final SliceFrame frame = new SliceFrame();
     public boolean initialized;
+    /** Dimension this 4D position belongs to. */
+    public String dimension = "";
     /** Server tick of the last movement update; used for speed sanity checks. */
     public transient long lastUpdate;
 
@@ -23,6 +25,7 @@ public final class PlayerState4 implements ValueIOSerializable {
         double[] m = frame.values();
         for (int i = 0; i < 9; i++) out.putDouble("f" + i, m[i]);
         out.putBoolean("init", initialized);
+        out.putString("dim", dimension);
     }
 
     @Override
@@ -33,6 +36,7 @@ public final class PlayerState4 implements ValueIOSerializable {
         frame.set(new SliceFrame(m));
         frame.orthonormalize();
         initialized = in.getBooleanOr("init", false);
+        dimension = in.getStringOr("dim", "");
     }
 
     /** Vanilla (render-space) position of this player: the 4D position expressed in the slice frame. */

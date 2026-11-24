@@ -72,8 +72,7 @@ class SlicerTest {
 
     @Test
     void tiltedSliceShowsWFaces() {
-        SliceFrame f = new SliceFrame();
-        f.rotateForwardIntoW(0f, Math.toRadians(45)); // yaw 0 => forward is +z, so rotate the z/w plane
+        SliceFrame f = SliceFrame.zw(Math.toRadians(45));
         Vec4 center = new Vec4(0.5, 0.5, 0.5, 0.5);
         List<Face> faces = slice(f, f.depthOf(center), new double[]{0, 0, 0, 0, 1, 1, 1, 1});
         boolean sawW = faces.stream().anyMatch(x -> x.dir == Direction4.ANA || x.dir == Direction4.KATA);
@@ -86,9 +85,10 @@ class SlicerTest {
 
     @Test
     void genericSliceGivesConvexClosedSolid() {
+        // An arbitrary orientation (as used by mobs) exercises the fully general hexagonal cuts.
         SliceFrame f = new SliceFrame();
-        f.rotateForwardIntoW(33f, Math.toRadians(27));
-        f.rotateForwardIntoW(-71f, Math.toRadians(52));
+        f.turnForwardTowards(0.4, 0.3, 0.8, Math.PI);
+        f.rotateInSlice(0.7);
         Vec4 c = new Vec4(0.5, 0.5, 0.5, 0.5);
         List<Face> faces = slice(f, f.depthOf(c) + 0.1, new double[]{0, 0, 0, 0, 1, 1, 1, 1});
         assertFalse(faces.isEmpty());
@@ -107,31 +107,59 @@ class SlicerTest {
     }
 
     @Test
-    void fourQuarterTurnsReturnToIdentity() {
-        SliceFrame f = new SliceFrame();
-        for (int i = 0; i < 4; i++) f.rotateForwardIntoW(0f, Math.PI / 2);
-        assertTrue(f.approxEquals(new SliceFrame(), 1e-9));
+    void zwSlicesOfTesseractsAreBoxes() {
+        // The reference camera keeps blocks box-shaped while rotating into W: every face must be a rectangle.
+        for (double deg = 0; deg < 360; deg += 7.5) {
+            SliceFrame f = SliceFrame.zw(Math.toRadians(deg));
+            for (double off = -0.43; off <= 0.45; off += 0.17) {
+                Vec4 c = new Vec4(0.5, 0.5, 0.5, 0.5);
+                List<Face> faces = slice(f, f.depthOf(c) + off, new double[]{0, 0, 0, 0, 1, 1, 1, 1});
+                assertFalse(faces.isEmpty());
+                for (Face face : faces) {
+                    assertEquals(4, face.n, "zw slices only produce rectangles (angle " + deg + ")");
+                    assertOutward(face);
+                }
+                assertEquals(6, faces.size(), "a box has six faces (angle " + deg + ")");
+            }
+        }
     }
 
     @Test
-    void quarterTurnLooksAlongW() {
-        SliceFrame f = new SliceFrame();
-        f.rotateForwardIntoW(0f, Math.PI / 2);
-        Vec4 look = f.lookDirection(0f, 0f);
-        assertEquals(1.0, look.w(), 1e-9, "after rotating forward into W by 90 degrees the player looks along +W");
-        assertTrue(f.isAxisAligned() == false);
-        assertEquals(0.0, f.normalW(), 1e-9);
-    }
-
-    @Test
-    void mouseYawNeverChangesTheSlice() {
-        SliceFrame f = new SliceFrame();
-        f.rotateForwardIntoW(20f, 0.4);
+    void zwQuarterTurnShowsXYW() {
+        SliceFrame f = SliceFrame.zw(Math.PI / 2);
+        assertTrue(f.isAxisAligned());
         Vec4 n = f.normal();
-        // Yaw and pitch are applied inside the slice: the look direction is always orthogonal to the normal.
-        for (float yaw = -180; yaw < 180; yaw += 17) {
-            for (float pitch = -90; pitch <= 90; pitch += 30) {
-                assertEquals(0.0, f.lookDirection(yaw, pitch).dot(n), 1e-9);
+        assertEquals(-1.0, n.z(), 1e-12);
+        assertEquals(0.0, n.w(), 1e-12);
+        assertEquals(1.0, f.lookDirection(0f, 0f).w(), 1e-12, "facing +z before the turn means facing +w after it");
+        assertEquals(Math.PI / 2, f.zwAngle(), 1e-12);
+    }
+
+    @Test
+    void forwardMatchesReferenceCamera() {
+        // Reference: forward = (sin xz, cos xz * cos zw, cos xz * sin zw) in (x, z, w); vanilla yaw turns the other way.
+        for (double zw = -3; zw <= 3; zw += 0.5) {
+            SliceFrame f = SliceFrame.zw(zw);
+            for (float yaw = -180; yaw < 180; yaw += 15) {
+                double r = Math.toRadians(yaw);
+                Vec4 look = f.lookDirection(yaw, 0f);
+                assertEquals(-Math.sin(r), look.x(), 1e-9);
+                assertEquals(Math.cos(r) * Math.cos(zw), look.z(), 1e-9);
+                assertEquals(Math.cos(r) * Math.sin(zw), look.w(), 1e-9);
+            }
+        }
+    }
+
+    @Test
+    void mouseLookNeverChangesTheSlice() {
+        for (double zw = 0; zw < 6.3; zw += 0.35) {
+            SliceFrame f = SliceFrame.zw(zw);
+            Vec4 n = f.normal();
+            assertEquals(0.0, n.x(), 1e-12, "the hyperplane normal stays in the z-w plane");
+            for (float yaw = -180; yaw < 180; yaw += 17) {
+                for (float pitch = -90; pitch <= 90; pitch += 30) {
+                    assertEquals(0.0, f.lookDirection(yaw, pitch).dot(n), 1e-9);
+                }
             }
         }
     }

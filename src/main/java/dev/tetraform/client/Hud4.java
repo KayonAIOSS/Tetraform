@@ -1,15 +1,19 @@
 package dev.tetraform.client;
 
-import dev.tetraform.math.Vec4;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 
 import java.util.Locale;
 
-/** Minimal 4D HUD: true XYZW position, the slice tilt, and a W-axis compass. */
+/**
+ * Small 4D orientation dial in the top-right corner, modelled on the reference camera's indicator. Red is the
+ * zw angle, blue the xz yaw, green the pitch. Full coordinates live in the F3 screen, which Tetraform turns 4D.
+ */
 public final class Hud4 {
     private Hud4() {}
+
+    private static final int R = 22;
 
     public static void onRenderGui(RenderGuiEvent.Post event) {
         if (!ClientState4.active) return;
@@ -17,36 +21,40 @@ public final class Hud4 {
         if (mc.player == null || mc.gui.hud.isHidden()) return;
         GuiGraphicsExtractor g = event.getGuiGraphics();
         var font = mc.font;
-        Vec4 p = ClientState4.pos;
-        Vec4 look = Interaction4.lookDir(mc.player);
-        Vec4 n = ClientState4.FRAME.normal();
-        String[] lines = {
-                String.format(Locale.ROOT, "XYZW %.1f / %.1f / %.1f / %.1f", p.x(), p.y(), p.z(), p.w()),
-                String.format(Locale.ROOT, "Slice tilt %.0f°  normal (%.2f, %.2f, %.2f)", ClientState4.FRAME.tiltDegrees(), n.x(), n.z(), n.w()),
-                String.format(Locale.ROOT, "Look (%.2f, %.2f, %.2f, %.2f)", look.x(), look.y(), look.z(), look.w()),
-        };
         int width = g.guiWidth();
-        int y = 4;
-        for (String s : lines) {
-            int w = font.width(s);
-            g.fill(width - w - 6, y - 1, width - 2, y + 9, 0x90000000);
-            g.text(font, s, width - w - 4, y, 0xFFE0E0FF, false);
-            y += 11;
+        boolean f3 = mc.debugEntries.isOverlayVisible();
+        int cx = width - R - 8, cy = (f3 ? g.guiHeight() - R - 40 : R + 8);
+
+        // ring
+        for (int i = 0; i < 64; i++) {
+            double a = i * Math.PI * 2 / 64;
+            int x = cx + (int) Math.round(Math.sin(a) * R), y = cy - (int) Math.round(Math.cos(a) * R);
+            g.fill(x, y, x + 1, y + 1, 0xC0FFFFFF);
         }
-        // W compass: a bar whose marker shows how much of the forward view points into +W/-W.
-        int cx = width / 2, top = 4, half = 50;
-        g.fill(cx - half, top, cx + half, top + 3, 0x80202040);
-        int mx = cx + (int) Math.round(look.w() * half);
-        g.fill(mx - 1, top - 2, mx + 2, top + 5, 0xFFB070FF);
-        g.text(font, "-W", cx - half - 14, top - 2, 0xFFB0B0D0, false);
-        g.text(font, "+W", cx + half + 3, top - 2, 0xFFB0B0D0, false);
+        g.fill(cx, cy - R, cx + 1, cy + R, 0x60FFFFFF);
+        g.fill(cx - R, cy, cx + R, cy + 1, 0x60FFFFFF);
+        double zw = ClientState4.zw;
+        double xz = Math.toRadians(mc.player.getYRot());
+        double pitch = Math.toRadians(-mc.player.getXRot());
+        dot(g, cx + Math.sin(xz) * R, cy - Math.cos(xz) * R, 0xFF3737FF);
+        dot(g, cx, cy - Math.sin(pitch) * R, 0xFF37FF37);
+        dot(g, cx + Math.sin(zw) * R, cy - Math.cos(zw) * R, 0xFFFF3737);
+        String label = String.format(Locale.ROOT, "zw %.0f°", Math.toDegrees(zw));
+        g.text(font, label, cx - font.width(label) / 2, cy + R + 3, 0xFFFF6060, true);
+
+        int mid = width / 2;
         if (ClientState4.waitingForTerrain) {
             String s = "Streaming 4D terrain…";
-            g.text(font, s, cx - font.width(s) / 2, top + 10, 0xFFFFFF80, true);
+            g.text(font, s, mid - font.width(s) / 2, 4, 0xFFFFFF80, true);
         }
         if (ClientState4.breakProgress > 0) {
             String s = String.format(Locale.ROOT, "%d%%", (int) (ClientState4.breakProgress * 100));
-            g.text(font, s, cx - font.width(s) / 2, g.guiHeight() / 2 + 8, 0xFFFFFFFF, true);
+            g.text(font, s, mid - font.width(s) / 2, g.guiHeight() / 2 + 8, 0xFFFFFFFF, true);
         }
+    }
+
+    private static void dot(GuiGraphicsExtractor g, double x, double y, int color) {
+        int ix = (int) Math.round(x), iy = (int) Math.round(y);
+        g.fill(ix - 2, iy - 2, ix + 3, iy + 3, color);
     }
 }

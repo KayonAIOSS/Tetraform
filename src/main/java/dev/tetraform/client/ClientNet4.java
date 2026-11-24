@@ -70,7 +70,7 @@ public final class ClientNet4 {
             ClientState4.vel = Vec4.ZERO;
             SliceFrame f = new SliceFrame(p.frame());
             f.orthonormalize();
-            ClientState4.FRAME.set(f);
+            ClientState4.setZW(f.zwAngle());
             ClientState4.hasPos = true;
             SliceManager.forceRemesh();
             Movement4.forceSend();

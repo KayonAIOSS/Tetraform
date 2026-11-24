@@ -140,8 +140,8 @@ public final class Commands4 {
     // ------------------------------------------------------------------ implementations
 
     private static ServerWorld4 world(CommandContext<CommandSourceStack> c) {
-        ServerWorld4 w = ServerWorld4.get(c.getSource().getServer());
-        if (w == null) throw new IllegalStateException("The tesseract dimension is not loaded");
+        ServerWorld4 w = ServerWorld4.defaultFor(c.getSource().getServer(), c.getSource().getLevel());
+        if (w == null) throw new IllegalStateException("No four-dimensional world is loaded");
         return w;
     }
 
@@ -245,11 +245,17 @@ public final class Commands4 {
 
     private static int enter(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
         ServerPlayer p = c.getSource().getPlayerOrException();
-        ServerWorld4 w = world(c);
+        ServerLevel tl = c.getSource().getServer().getLevel(Tetraform.TESSERACT);
+        ServerWorld4 w = tl == null ? null : ServerWorld4.get(tl);
+        if (w == null) {
+            c.getSource().sendFailure(Component.literal("The tesseract dimension is not available"));
+            return 0;
+        }
         PlayerState4 st = ServerWorld4.state(p);
-        Vec4 to = st.initialized ? st.pos : w.findSurface(0.5, 0.5, 0.5);
+        boolean same = st.initialized && st.dimension.equals(Tetraform.TESSERACT.identifier().toString());
+        Vec4 to = same ? st.pos : w.findSurface(0.5, 0.5, 0.5);
         w.teleport(p, to, null);
-        c.getSource().sendSuccess(() -> Component.literal("Entered the tesseract. Use the W keys to move ana/kata and rotate into the fourth dimension."), false);
+        c.getSource().sendSuccess(() -> Component.literal("Entered the tesseract. Hold Left Alt and scroll (or use mouse buttons 4/5) to rotate into the fourth dimension."), false);
         return 1;
     }
 
@@ -266,8 +272,8 @@ public final class Commands4 {
         PlayerState4 st = ServerWorld4.state(p);
         Vec4 n = st.frame.normal();
         c.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                "4D position %s, slice normal (%.3f, %.3f, %.3f, %.3f), tilt %.1f°",
-                st.pos, n.x(), n.y(), n.z(), n.w(), st.frame.tiltDegrees())), false);
+                "4D position %s, slice normal (%.3f, %.3f, %.3f, %.3f), zw %.1f°",
+                st.pos, n.x(), n.y(), n.z(), n.w(), Math.toDegrees(st.frame.zwAngle()))), false);
         return 1;
     }
 
@@ -275,9 +281,7 @@ public final class Commands4 {
         ServerPlayer p = c.getSource().getPlayerOrException();
         ServerWorld4 w = world(c);
         PlayerState4 st = ServerWorld4.state(p);
-        SliceFrame f = st.frame.copy();
-        if (reset) f.setIdentity();
-        else f.rotateForwardIntoW(p.getYRot(), Math.toRadians(degrees));
+        SliceFrame f = reset ? new SliceFrame() : SliceFrame.zw(st.frame.zwAngle() + Math.toRadians(degrees));
         st.frame.set(f);
         w.sendTeleport(p, false);
         return 1;

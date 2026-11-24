@@ -34,7 +34,7 @@ import java.util.concurrent.*;
  * scheduled ticks (fluids, redstone, gravity), and 4D entities.
  */
 public final class ServerWorld4 {
-    private static ServerWorld4 instance;
+    private static final Map<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, ServerWorld4> INSTANCES = new HashMap<>();
 
     private final MinecraftServer server;
     private final ServerLevel level;
@@ -84,7 +84,8 @@ public final class ServerWorld4 {
             t.setPriority(Thread.NORM_PRIORITY - 1);
             return t;
         });
-        this.dir = server.getWorldPath(LevelResource.ROOT).resolve("tetraform4d");
+        var id = level.dimension().identifier();
+        this.dir = server.getWorldPath(LevelResource.ROOT).resolve("tetraform4d").resolve(id.getNamespace()).resolve(id.getPath());
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
@@ -93,29 +94,47 @@ public final class ServerWorld4 {
         this.behaviors = new Behaviors4(this);
     }
 
-    public static ServerWorld4 get(MinecraftServer server) {
-        if (instance == null || instance.server != server) {
-            ServerLevel l = server.getLevel(Tetraform.TESSERACT);
-            if (l == null) return null;
-            instance = new ServerWorld4(server, l);
+    /** The 4D world backing {@code level}, or null if that level is not four-dimensional. */
+    public static ServerWorld4 get(ServerLevel level) {
+        if (!Tetraform.is4D(level)) return null;
+        ServerWorld4 w = INSTANCES.get(level.dimension());
+        if (w == null || w.level != level) {
+            if (w != null) w.close();
+            w = new ServerWorld4(level.getServer(), level);
+            INSTANCES.put(level.dimension(), w);
         }
-        return instance;
+        return w;
     }
 
-    public static ServerWorld4 getIfLoaded() {
-        return instance;
+    public static ServerWorld4 getIfLoaded(ServerLevel level) {
+        ServerWorld4 w = INSTANCES.get(level.dimension());
+        return w != null && w.level == level ? w : null;
+    }
+
+    /**
+     * The 4D world a command or 3D player should go to: their own level if it is 4D, otherwise the overworld if
+     * it is 4D, otherwise the tesseract dimension.
+     */
+    public static ServerWorld4 defaultFor(MinecraftServer server, ServerLevel current) {
+        if (current != null && Tetraform.is4D(current)) return get(current);
+        ServerLevel ow = server.overworld();
+        if (Tetraform.is4D(ow)) return get(ow);
+        ServerLevel t = server.getLevel(Tetraform.TESSERACT);
+        return t == null ? null : get(t);
     }
 
     public static void shutdown() {
-        if (instance != null) {
-            instance.saveAll(true);
-            instance.workers.shutdown();
-            try {
-                instance.workers.awaitTermination(30, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-            instance = null;
+        for (ServerWorld4 w : INSTANCES.values()) w.close();
+        INSTANCES.clear();
+    }
+
+    private void close() {
+        saveAll(true);
+        workers.shutdown();
+        try {
+            workers.awaitTermination(30, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -166,10 +185,12 @@ public final class ServerWorld4 {
     public void onPlayerEnter(ServerPlayer p) {
         trackers.put(p.getUUID(), new Tracker());
         PlayerState4 st = state(p);
-        if (!st.initialized) {
+        String dim = level.dimension().identifier().toString();
+        if (!st.initialized || !st.dimension.equals(dim)) {
             st.pos = findSurface(0.5, 0.5, 0.5);
             st.frame.setIdentity();
             st.initialized = true;
+            st.dimension = dim;
         }
         sendTeleport(p, true);
     }
@@ -195,6 +216,7 @@ public final class ServerWorld4 {
         PlayerState4 st = state(p);
         st.pos = target;
         st.initialized = true;
+        st.dimension = level.dimension().identifier().toString();
         if (frame != null) st.frame.set(frame);
         loadNow((int) Math.floor(target.x()) >> 4, (int) Math.floor(target.z()) >> 4, (int) Math.floor(target.w()) >> 4);
         if (p.level() != level) {
@@ -207,10 +229,10 @@ public final class ServerWorld4 {
     }
 
     public static void handleMove(ServerPlayer p, Net4.Move4C2S m) {
-        if (!Tetraform.isTesseract(p.level())) return;
-        ServerWorld4 w = get(p.level().getServer());
+        ServerWorld4 w = get(p.level());
         if (w == null) return;
         PlayerState4 st = state(p);
+        if (!st.dimension.equals(p.level().dimension().identifier().toString())) return;
         Vec4 np = new Vec4(m.x(), m.y(), m.z(), m.w());
         if (!Double.isFinite(np.lengthSqr())) return;
         double moved = np.distance(st.pos);
@@ -515,8 +537,7 @@ public final class ServerWorld4 {
     // ------------------------------------------------------------------ actions
 
     public static void handleAction(ServerPlayer p, Net4.Action4C2S a) {
-        if (!Tetraform.isTesseract(p.level())) return;
-        ServerWorld4 w = get(p.level().getServer());
+        ServerWorld4 w = get(p.level());
         if (w != null) w.behaviors.handleAction(p, a);
     }
 

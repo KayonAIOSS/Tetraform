@@ -4,12 +4,16 @@ A NeoForge mod for **Minecraft 26.3** (NeoForge `26.3.0.116`, Java 25) that adds
 dimension. It does not stack copies of a 3D world. Every block is a unit tesseract, every position is a `Vec4`,
 and everything you see is the 3D cross-section of a 4D world by your own viewing hyperplane, rendered as faces.
 
+**It works out of the box:** with Tetraform installed, the *Default* world type creates a 4D overworld (the
+Nether and End stay vanilla). `/tetra enter` also takes you to a separate 4D dimension from any world, including
+worlds created before the mod was installed.
+
 ## What is four-dimensional
 
 | System | How it works in 4D |
 |---|---|
 | **Positions** | `Vec4` / `BlockPos4` (x, y, z, **w**) for players, mobs, items and blocks. |
-| **World storage** | 16×16×16×16 tesseract sections in palette-compressed, bit-packed storage, stacked into 256-tall columns keyed by (cx, cz, cw). They are saved in `<world>/tetraform4d/`. |
+| **World storage** | 16×16×16×16 tesseract sections in palette-compressed, bit-packed storage, stacked into 256-tall columns keyed by (cx, cz, cw). They are saved in `<world>/tetraform4d/<dimension>/`. |
 | **Terrain** | The height field is a function of (x, z, w). Caves come from 4D simplex noise and trees grow hyperspherical canopies. Generation runs off-thread. |
 | **Neighbours** | Every block has **8** face neighbours (`Direction4`: ±x, ±y, ±z, ±w). Face culling, redstone, fluids and light all use them. |
 | **Physics** | Swept hyperbox collision on all four axes, with step-up, gravity, swimming and creative flight. |
@@ -20,18 +24,27 @@ and everything you see is the 3D cross-section of a 4D world by your own viewing
 
 ## The 4D camera
 
-The rotation composes in the order you asked for:
+The view is built in the same order as the reference camera:
 
-1. **xz**: ordinary yaw (the mouse).
-2. **forward ↔ w**: the *Rotate view into ±W* keys rotate your current forward direction into the W axis.
-3. **forward ↔ y**: ordinary pitch (the mouse).
+1. **xz**: yaw (mouse left/right).
+2. **yd**: pitch (mouse up/down).
+3. **zw**: the world's z axis rotated into w by your **zw angle**.
 
-The two horizontal rotations never touch Y, so their accumulated result is stored as a rotation matrix over
-(x, z, w) (`SliceFrame`). Yaw and pitch stay vanilla angles inside your slice. Two things follow from this:
+This gives forward = (sin xz, cos xz·cos zw, cos xz·sin zw) and the matching right vector, so walking at
+zw = 90° moves you through W. The visible hyperplane is spanned by x, y and the rotated z axis. Its normal,
+(0, −sin zw, cos zw), depends **only on zw**, which has three consequences:
 
-* Mouse look **never changes which slice you see**, so it costs nothing.
-* Only rotating into W or moving along W changes the hyperplane, and only then do terrain meshes rebuild.
-  Rotating 90° into W at yaw 0 gives you an exact x/y/w view.
+* Mouse look never changes which slice you see, so it costs nothing.
+* Every tesseract cuts into a **rectangular box**: the x and y extents stay 1 and only the depth along the
+  rotated axis changes. At zw = 0°, 90°, 180° and 270° every block is a perfect cube (you see the x-y-z,
+  x-y-w, … slices). Tests check that every face of every zw slice is a rectangle.
+* While you rotate, the world turns around **you**: your on-screen position stays fixed instead of jumping.
+
+A note on the Python demo: its "dynamic" projection uses depth = cos(zw)·z′ + sin(zw)·w′. Because z′ and w′
+were just rotated by that same angle, this simplifies to the *unrotated* z. So the demo draws the world as
+if zw were 0 and ignores w on screen. That is why its wireframes always stay perfect cubes. Tetraform
+keeps the demo's rotation order and movement vectors but really shows the rotated slice, so W becomes visible.
+The blocks stay boxes, but between quarter turns they stretch in depth.
 
 ## Rendering: faces, not lines
 
@@ -71,16 +84,25 @@ through vanilla entity render types.
 
 ## Controls
 
-| Key (rebindable) | Action |
+All of these are in **Options → Controls → Key Binds → Tetraform (4D)** and can be rebound to any key or
+mouse button. They work out of the box:
+
+| Default | Action |
 |---|---|
-| `R` / `V` | Move ana (+W) / kata (−W) along your slice normal |
-| `G` / `B` | Rotate your view forward into +W / −W |
-| `N` | Reset the slice to the ordinary XYZ orientation |
+| Hold **Left Alt** + **scroll wheel** | Rotate into W, 5° per notch. While the modifier is held, scrolling does **not** change the hotbar slot. |
+| **Mouse button 5** / **Mouse button 4** (side buttons) | Smoothly rotate toward +W / −W while held (60°/s). These are optional; if your mouse has no side buttons, rebind them, e.g. to `G` / `B`. |
+| `N` | Reset the W rotation to 0° (ordinary XYZ view) |
+| `R` / `V` | Strafe along the hidden axis (ana / kata) |
 
-The HUD shows your true XYZW position, the slice tilt and normal, your 4D look vector, and a W compass.
-F3 shows *render-space* coordinates, not world coordinates.
+**F3 is four-dimensional.** In a 4D world, the vanilla debug entries show 4D data with their usual layout:
+`XYZW`, `Block x y z w`, `Chunk cx cy cz cw`, `Facing: ana (Towards positive W) (yaw / pitch / zw)`, a `Slice`
+line (zw angle, hyperplane normal, depth), 4D section-relative coordinates, the targeted 4D block and face,
+4D light, the 4D surface height and the terrain type. A dial in the top-right corner shows zw (red), yaw (blue) and pitch
+(green).
 
-Commands: `/tetra enter`, `/tetra leave`, `/tetra where`, `/tetra rotate <deg>`, `/tetra reset`,
+Pressing a 4D control in a 3D world shows a hint explaining why nothing happens.
+
+Commands: `/tetra enter`, `/tetra leave`, `/tetra where`, `/tetra rotate <deg>` (adds to zw), `/tetra reset`,
 `/tetra explode x y z w [power]`, `/tetra killmobs`.
 
 ## Building
@@ -106,13 +128,19 @@ To build locally:
   rendered with the face sprite of their model. They are not rendered with their full 3D model.
 * Lighting is approximate: sky light comes from the 4D heightmap, and block light from emitters by 4D
   Manhattan distance. It is not a full flood fill.
-* While you hold the rotate-into-W key, all visible sections rebuild in steps of 5°. With Sodium this is fast,
-  but you may see sections update one after another.
+* While zw changes, all visible sections rebuild (the chunk mesher has no per-frame path). With Sodium this
+  is quick, but during fast turns, distant sections can lag a moment behind nearby ones.
+* Upgrading from 0.1.0: the key-binding ids changed so the new defaults apply; earlier custom bindings for
+  Tetraform keys need to be set again.
 
 ## Screenshots
 
-These were rendered in-game with software OpenGL.
+These were rendered in-game with software OpenGL and Sodium 0.9.3, in a fresh *Default* world with F3 open.
 
-| Ordinary XYZ slice | Same spot, tilted 60° into W | A Stalker (sliced 4D body) |
+| zw 0° (x-y-z slice) | zw 45° (boxes stretched in depth) | zw 90° (x-y-w slice, cubes again) |
 |---|---|---|
-| ![](docs/slice-xyz.png) | ![](docs/slice-tilted-60.png) | ![](docs/stalker.png) |
+| ![](docs/f3-4d.png) | ![](docs/zw-45.png) | ![](docs/zw-90.png) |
+
+| Ordinary slice (0.1.0) | A Stalker (sliced 4D body) |
+|---|---|
+| ![](docs/slice-xyz.png) | ![](docs/stalker.png) |
