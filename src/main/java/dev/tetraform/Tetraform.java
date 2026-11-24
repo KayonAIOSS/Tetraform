@@ -33,8 +33,14 @@ public final class Tetraform {
     public static final String MODID = "tetraform";
     public static final Logger LOGGER = LoggerFactory.getLogger("Tetraform");
 
-    /** The four-dimensional world. */
+    /** The extra four-dimensional dimension (reachable with /tetra enter from any world). */
     public static final ResourceKey<Level> TESSERACT = ResourceKey.create(Registries.DIMENSION, id("tesseract"));
+    /**
+     * Every level whose dimension type is this one is four-dimensional. The mod's world preset gives the default
+     * overworld this type, so new worlds are 4D out of the box.
+     */
+    public static final ResourceKey<net.minecraft.world.level.dimension.DimensionType> FOUR_D_TYPE =
+            ResourceKey.create(Registries.DIMENSION_TYPE, id("tesseract"));
 
     public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(MODID);
     public static final DeferredRegister<AttachmentType<?>> ATTACHMENTS = DeferredRegister.create(NeoForgeRegistries.Keys.ATTACHMENT_TYPES, MODID);
@@ -69,7 +75,8 @@ public final class Tetraform {
         return Identifier.fromNamespaceAndPath(MODID, path);
     }
 
-    public static boolean isTesseract(Level level) {
-        return level != null && level.dimension() == TESSERACT;
+    /** Is this level four-dimensional (true for both the 4D overworld and the tesseract dimension)? */
+    public static boolean is4D(Level level) {
+        return level != null && level.dimensionTypeRegistration().is(FOUR_D_TYPE);
     }
 }

@@ -29,21 +29,40 @@ public final class TetraformClient {
         NeoForge.EVENT_BUS.addListener(TetraformClient::onMovementInput);
         NeoForge.EVENT_BUS.addListener(TetraformClient::onRenderPlayer);
         NeoForge.EVENT_BUS.addListener(TetraformClient::onLogout);
+        NeoForge.EVENT_BUS.addListener(Rotation4::onScroll);
         Hooks4.travelHook = p -> ClientState4.active && p == Minecraft.getInstance().player;
     }
 
     private static void onClientTick(ClientTickEvent.Pre event) {
         Minecraft mc = Minecraft.getInstance();
-        boolean now = mc.level != null && mc.level.dimension() == Tetraform.TESSERACT;
+        boolean now = Tetraform.is4D(mc.level);
         if (ClientState4.active && !now) {
             ClientState4.reset();
             ClientNet4.clearPending();
         }
         ClientState4.active = now;
-        if (!now) return;
+        if (!now) {
+            hintIn3D(mc);
+            return;
+        }
         ClientNet4.drain();
         LocalPlayer player = mc.player;
         if (player != null && ClientState4.hasPos) Interaction4.tick(player);
+    }
+
+    private static long lastHint;
+
+    /** Pressing a 4D control in a 3D world explains why nothing happens instead of failing silently. */
+    private static void hintIn3D(Minecraft mc) {
+        boolean pressed = false;
+        for (var k : new net.minecraft.client.KeyMapping[]{Keys4.ANA, Keys4.KATA, Keys4.ROTATE_ANA, Keys4.ROTATE_KATA, Keys4.RESET_SLICE}) {
+            while (k.consumeClick()) pressed = true;
+        }
+        if (!pressed || mc.player == null || mc.level == null) return;
+        long now = mc.level.getGameTime();
+        if (now - lastHint < 60) return;
+        lastHint = now;
+        mc.gui.hud.setOverlayMessage(net.minecraft.network.chat.Component.translatable("tetraform.hint.not_4d"), false);
     }
 
     private static void onMovementInput(MovementInputUpdateEvent event) {

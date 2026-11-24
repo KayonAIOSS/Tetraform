@@ -1,17 +1,23 @@
 package dev.tetraform.math;
 
 /**
- * The orientation of a viewer's 3D slice ("hyperplane") through 4D space.
+ * The orientation of a viewer's 3D slice ("hyperplane") through 4D space, stored as a rotation matrix over the
+ * three horizontal axes (x, z, w). Y is never rotated.
  * <p>
- * Tetraform's look rotation is the composition the player experiences as: <b>XZ (yaw)</b>, then
- * <b>forward&harr;W</b>, then <b>forward&harr;Y (pitch)</b>. Because both yaw and the forward/W rotation never touch the
- * Y axis, all accumulated horizontal rotation lives in a rotation matrix over the three horizontal axes
- * (x, z, w). This class stores that matrix. Its columns are the world-space directions of the viewer's local
- * x', z' and w' axes. The local x'/y/z' axes span the visible hyperplane, and w' is its normal.
+ * A player's view is built in the order <b>xz (yaw) &rarr; yd (pitch) &rarr; zw</b>. The last step rotates the
+ * world's z axis into w by the player's {@code zw} angle (see {@link #zw(double)}). That gives:
+ * <ul>
+ *   <li>forward = (sin&nbsp;xz, cos&nbsp;xz&middot;cos&nbsp;zw, cos&nbsp;xz&middot;sin&nbsp;zw), right likewise,
+ *   which matches the reference camera's movement vectors;</li>
+ *   <li>a hyperplane normal (0, &minus;sin&nbsp;zw, cos&nbsp;zw) that depends <em>only</em> on zw. Mouse yaw and
+ *   pitch never change which slice is visible.</li>
+ * </ul>
+ * The normal lies in the z-w plane, so every tesseract cuts into a <b>rectangular box</b> (x-extent &times;
+ * y-extent &times; a segment of the zw square). Blocks stay box-shaped while you rotate; only their depth
+ * along the rotated axis changes.
  * <p>
- * Yaw and pitch then stay ordinary vanilla angles measured inside the slice. Turning with the mouse rotates
- * inside the hyperplane and never changes which 3D slice is visible, so mouse look costs nothing. Rotating
- * forward into W ({@link #rotateForwardIntoW}) is the only thing that tilts the hyperplane.
+ * Columns of the matrix are the world-space directions of the local x', z' and w' axes; w' is the normal.
+ * Mobs use general rotations of this class to turn freely through all of x, z and w.
  */
 public final class SliceFrame {
     /** Row-major 3x3 over (x, z, w). m[r*3+c]: row r = world axis (0=x,1=z,2=w), column c = local axis. */
@@ -46,8 +52,23 @@ public final class SliceFrame {
         return m[row * 3 + col];
     }
 
+    /** A viewer frame: the world z axis rotated into w by {@code angle} radians (0 = ordinary xyz slice). */
+    public static SliceFrame zw(double angle) {
+        double c = Math.cos(angle), s = Math.sin(angle);
+        if (Math.abs(c) < 1.0E-12) c = 0;
+        if (Math.abs(s) < 1.0E-12) s = 0;
+        return new SliceFrame(new double[]{1, 0, 0, 0, c, -s, 0, s, c});
+    }
+
+    /** The z&rarr;w rotation angle of a viewer frame, in radians [-pi, pi]. */
+    public double zwAngle() {
+        return Math.atan2(m[7], m[4]);
+    }
+
+    /** True when the hyperplane normal is a coordinate axis, so every slice is made of whole unit cubes. */
     public boolean isAxisAligned() {
-        return Math.abs(Math.abs(m[8]) - 1.0) < 1.0E-9;
+        double ax = Math.abs(m[2]), az = Math.abs(m[5]), aw = Math.abs(m[8]);
+        return Math.max(ax, Math.max(az, aw)) > 1.0 - 1.0E-9;
     }
 
     /** World-space 4D unit normal of the hyperplane (its Y component is always 0). */
@@ -81,33 +102,6 @@ public final class SliceFrame {
     /** Local-x' of a world horizontal (x,z,w) point; fast path for meshing. */
     public double localX(double x, double z, double w) { return m[0] * x + m[3] * z + m[6] * w; }
     public double localZ(double x, double z, double w) { return m[1] * x + m[4] * z + m[7] * w; }
-
-    /**
-     * Rotates the frame in the plane spanned by the viewer's current horizontal forward (given by the in-slice
-     * vanilla yaw) and the slice normal: "forward into W". Positive angles tilt forward toward +w'.
-     */
-    public void rotateForwardIntoW(float yawDegrees, double angleRadians) {
-        double yaw = Math.toRadians(yawDegrees);
-        // vanilla: forward = (-sin(yaw), 0, cos(yaw)) in (x', y, z').
-        double ax = -Math.sin(yaw), az = Math.cos(yaw);
-        double c = Math.cos(angleRadians), s = Math.sin(angleRadians);
-        // G in local (x', z', w') coordinates: rotation in plane {a = (ax, az, 0), b = (0, 0, 1)}.
-        // G = I + s (b a^T - a b^T) + (c - 1)(a a^T + b b^T)
-        double[] g = new double[9];
-        double[] a = {ax, az, 0};
-        double[] b = {0, 0, 1};
-        for (int r = 0; r < 3; r++) {
-            for (int col = 0; col < 3; col++) {
-                double v = (r == col ? 1 : 0)
-                        + s * (b[r] * a[col] - a[r] * b[col])
-                        + (c - 1) * (a[r] * a[col] + b[r] * b[col]);
-                g[r * 3 + col] = v;
-            }
-        }
-        multiplyRight(g);
-        orthonormalize();
-        snap();
-    }
 
     /** Rotates the frame inside the slice (about the normal); used to fold yaw into the frame. */
     public void rotateInSlice(double angleRadians) {
@@ -210,10 +204,7 @@ public final class SliceFrame {
         return true;
     }
 
-    /**
-     * World-space 4D look direction for a vanilla yaw/pitch measured inside this slice.
-     * Composition order: yaw (xz) &rarr; frame (forward&harr;w) &rarr; pitch (forward&harr;y).
-     */
+    /** World-space 4D look direction: yaw (xz), then pitch (yd), then this frame's zw rotation. */
     public Vec4 lookDirection(float yawDeg, float pitchDeg) {
         double yaw = Math.toRadians(yawDeg), pitch = Math.toRadians(pitchDeg);
         double cp = Math.cos(pitch);

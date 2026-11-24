@@ -22,11 +22,11 @@ public abstract class ServerGamePacketListenerMixin {
 
     @Inject(method = "shouldCheckPlayerMovement", at = @At("HEAD"), cancellable = true)
     private void tetraform$noMoveCheck(boolean isFallFlying, CallbackInfoReturnable<Boolean> cir) {
-        if (Tetraform.isTesseract(this.player.level())) cir.setReturnValue(false);
+        if (Tetraform.is4D(this.player.level())) cir.setReturnValue(false);
     }
 
     @Inject(method = "forceSendPlayerSupportBlocks", at = @At("HEAD"), cancellable = true)
     private void tetraform$noSupportSpam(CallbackInfo ci) {
-        if (Tetraform.isTesseract(this.player.level())) ci.cancel();
+        if (Tetraform.is4D(this.player.level())) ci.cancel();
     }
 }

@@ -1,10 +1,12 @@
 {
   "block.tetraform.slice_anchor": "Slice Anchor",
   "key.category.tetraform.tetraform": "Tetraform (4D)",
-  "key.tetraform.ana": "Move ana (+W)",
-  "key.tetraform.kata": "Move kata (-W)",
-  "key.tetraform.rotate_ana": "Rotate view into +W",
-  "key.tetraform.rotate_kata": "Rotate view into -W",
-  "key.tetraform.reset_slice": "Reset slice to XYZ",
-  "dimension.tetraform.tesseract": "The Tesseract"
+  "dimension.tetraform.tesseract": "The Tesseract",
+  "tetraform.hint.not_4d": "This world is 3D. Create a new world (the Default type is 4D with Tetraform) or use /tetra enter.",
+  "key.tetraform.w_rotation_modifier": "Rotate into W (hold + scroll)",
+  "key.tetraform.smooth_turn_ana": "Smooth rotate toward +W",
+  "key.tetraform.smooth_turn_kata": "Smooth rotate toward -W",
+  "key.tetraform.reset_w_rotation": "Reset W rotation",
+  "key.tetraform.strafe_ana": "Strafe ana (+W')",
+  "key.tetraform.strafe_kata": "Strafe kata (-W')"
 }

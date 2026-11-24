@@ -101,22 +101,31 @@ public final class SliceMesher {
 
         private int light(Direction4 dir, int emission) {
             int x = vx + dir.dx, y = vy + dir.dy, z = vz + dir.dz, w = vw + dir.dw;
-            int h = level.heightAt(x, z, w);
-            int sky = y >= h ? 15 : Math.max(0, 15 - 3 * (h - y));
-            int block = emission;
-            if (emitters != null) {
-                for (long[] list : emitters) {
-                    if (list == null) continue;
-                    for (int i = 0; i < list.length; i += 2) {
-                        BlockPos4 e = BlockPos4.of(list[i]);
-                        int d = Math.abs(e.x() - x) + Math.abs(e.y() - y) + Math.abs(e.z() - z) + Math.abs(e.w() - w);
-                        int l = (int) list[i + 1] - d;
-                        if (l > block) block = l;
-                    }
+            return LightCoordsUtil.pack(blockLight(emitters, x, y, z, w, emission), skyLight(level, x, y, z, w));
+        }
+    }
+
+    /** 4D sky light: full above the (x, z, w) column's surface, fading with depth below it. */
+    public static int skyLight(ClientLevel4 level, int x, int y, int z, int w) {
+        int h = level.heightAt(x, z, w);
+        return y >= h ? 15 : Math.max(0, 15 - 3 * (h - y));
+    }
+
+    /** 4D block light: emitters attenuate by 4D Manhattan distance. */
+    public static int blockLight(long[][] emitters, int x, int y, int z, int w, int base) {
+        int block = base;
+        if (emitters != null) {
+            for (long[] list : emitters) {
+                if (list == null) continue;
+                for (int i = 0; i < list.length; i += 2) {
+                    BlockPos4 e = BlockPos4.of(list[i]);
+                    int d = Math.abs(e.x() - x) + Math.abs(e.y() - y) + Math.abs(e.z() - z) + Math.abs(e.w() - w);
+                    int l = (int) list[i + 1] - d;
+                    if (l > block) block = l;
                 }
             }
-            return LightCoordsUtil.pack(Math.max(0, Math.min(15, block)), sky);
         }
+        return Math.max(0, Math.min(15, block));
     }
 
     private static float clamp01(float f) {
@@ -133,8 +142,9 @@ public final class SliceMesher {
         SliceFrame f = params.frame();
         double depth = params.depth();
         int ox = origin.getX(), oy = origin.getY(), oz = origin.getZ();
+        double mox = params.offX(), moz = params.offZ();
         Slicer slicer = SLICER.get();
-        slicer.setPlane(f, depth, ox, oz);
+        slicer.setPlane(f, depth, ox - mox, oz - moz);
 
         double nx = f.normalX(), nz = f.normalZ(), nw = f.normalW();
         double h = 0.5 * (Math.abs(nx) + Math.abs(nz) + Math.abs(nw));
@@ -148,7 +158,7 @@ public final class SliceMesher {
         double[] lo = {Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE};
         double[] hi = {-Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE};
         for (int c = 0; c < 4; c++) {
-            double lx = ox + ((c & 1) != 0 ? 16 : 0), lz = oz + ((c & 2) != 0 ? 16 : 0);
+            double lx = ox - mox + ((c & 1) != 0 ? 16 : 0), lz = oz - moz + ((c & 2) != 0 ? 16 : 0);
             var p = f.toWorld(lx, 0, lz, depth);
             double[] q = {p.x(), p.z(), p.w()};
             for (int i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], q[i]); hi[i] = Math.max(hi[i], q[i]); }
@@ -192,7 +202,7 @@ public final class SliceMesher {
                     int x = idx[0], z = idx[1], w = idx[2];
                     // assign each voxel to exactly one section by its projected centre
                     double cx = x + 0.5, cz = z + 0.5, cw = w + 0.5;
-                    double rx = f.localX(cx, cz, cw), rz = f.localZ(cx, cz, cw);
+                    double rx = f.localX(cx, cz, cw) + mox, rz = f.localZ(cx, cz, cw) + moz;
                     if (rx < ox || rx >= ox + 16 || rz < oz || rz >= oz + 16) continue;
                     if (cached == null || cached.cx != (x >> 4) || cached.cz != (z >> 4) || cached.cw != (w >> 4)) {
                         cached = level.getColumnAt(x, z, w);

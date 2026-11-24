@@ -24,8 +24,8 @@ public final class Movement4 {
     private static final double WALK = 0.2158, SPRINT = 0.2806, SNEAK_FACTOR = 0.3;
     private static int jumpTapTimer;
     private static boolean lastJump;
-    private static int rotateCooldown;
     private static Vec4 lastSent;
+    private static double lastSentZW;
     private static int sendTimer;
     private static Vec4 pendingImpulse = Vec4.ZERO;
 
@@ -40,7 +40,7 @@ public final class Movement4 {
         ((ClientInputAccessor) input).tetraform$setMoveVector(Vec2.ZERO);
         player.setDeltaMovement(Vec3.ZERO);
 
-        handleRotation(player);
+        Rotation4.tick(player);
         if (!ClientState4.hasPos) return;
         ClientState4.prevPos = ClientState4.pos;
 
@@ -142,39 +142,12 @@ public final class Movement4 {
         }
     }
 
-    private static void handleRotation(LocalPlayer player) {
-        if (Keys4.RESET_SLICE.consumeClick()) {
-            // Fold the current forward direction back into an ordinary xyz slice.
-            ClientState4.FRAME.setIdentity();
-            onFrameChanged(player);
-        }
-        if (rotateCooldown > 0) {
-            rotateCooldown--;
-            return;
-        }
-        int dir = (Keys4.ROTATE_ANA.isDown() ? 1 : 0) - (Keys4.ROTATE_KATA.isDown() ? 1 : 0);
-        if (dir != 0) {
-            ClientState4.FRAME.rotateForwardIntoW(player.getYRot(), Math.toRadians(5 * dir));
-            rotateCooldown = 1;
-            onFrameChanged(player);
-        }
-    }
-
-    private static void onFrameChanged(LocalPlayer player) {
-        SliceManager.update();
-        double[] rp = SliceManager.toRender(ClientState4.pos);
-        player.setPos(rp[0], rp[1], rp[2]);
-        player.xo = player.xOld = rp[0];
-        player.yo = player.yOld = rp[1];
-        player.zo = player.zOld = rp[2];
-        lastSent = null;
-    }
-
     private static void sendState(LocalPlayer player) {
         Vec4 p = ClientState4.pos;
-        if (lastSent != null && lastSent.distanceSqr(p) < 1.0E-8 && ++sendTimer < 20) return;
+        if (lastSent != null && lastSent.distanceSqr(p) < 1.0E-8 && lastSentZW == ClientState4.zw && ++sendTimer < 20) return;
         sendTimer = 0;
         lastSent = p;
+        lastSentZW = ClientState4.zw;
         ClientPacketDistributor.sendToServer(new Net4.Move4C2S(p.x(), p.y(), p.z(), p.w(), ClientState4.FRAME.values(), ClientState4.onGround));
     }
 

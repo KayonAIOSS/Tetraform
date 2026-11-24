@@ -6,27 +6,37 @@ import net.minecraft.client.KeyMapping;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 
+/**
+ * Tetraform controls; all of them are rebindable under Options &rarr; Controls &rarr; Key Binds &rarr; Tetraform (4D).
+ * Defaults work out of the box: hold Left Alt and scroll to rotate into W; mouse buttons 4/5 rotate smoothly.
+ */
 public final class Keys4 {
     public static final KeyMapping.Category CATEGORY = new KeyMapping.Category(Tetraform.id("tetraform"));
 
-    public static final KeyMapping ANA = key("ana", InputConstants.KEY_R);
-    public static final KeyMapping KATA = key("kata", InputConstants.KEY_V);
-    public static final KeyMapping ROTATE_ANA = key("rotate_ana", InputConstants.KEY_G);
-    public static final KeyMapping ROTATE_KATA = key("rotate_kata", InputConstants.KEY_B);
-    public static final KeyMapping RESET_SLICE = key("reset_slice", InputConstants.KEY_N);
+    /** Hold this and scroll the mouse wheel to rotate z into w (the hotbar does not change while held). */
+    public static final KeyMapping ROTATE_MODIFIER = key("w_rotation_modifier", InputConstants.Type.KEYBOARD, InputConstants.KEY_LALT);
+    /** Smooth rotation toward +W while held (default: mouse "forward" side button). */
+    public static final KeyMapping ROTATE_ANA = key("smooth_turn_ana", InputConstants.Type.MOUSE, InputConstants.MOUSE_BUTTON_5);
+    /** Smooth rotation toward -W while held (default: mouse "back" side button). */
+    public static final KeyMapping ROTATE_KATA = key("smooth_turn_kata", InputConstants.Type.MOUSE, InputConstants.MOUSE_BUTTON_4);
+    public static final KeyMapping RESET_SLICE = key("reset_w_rotation", InputConstants.Type.KEYBOARD, InputConstants.KEY_N);
+    /** Strafe along the hidden axis (the slice normal). */
+    public static final KeyMapping ANA = key("strafe_ana", InputConstants.Type.KEYBOARD, InputConstants.KEY_R);
+    public static final KeyMapping KATA = key("strafe_kata", InputConstants.Type.KEYBOARD, InputConstants.KEY_V);
 
-    private static KeyMapping key(String name, int code) {
-        return new KeyMapping("key.tetraform." + name, KeyConflictContext.IN_GAME, InputConstants.Type.KEYBOARD, code, CATEGORY);
+    private static KeyMapping key(String name, InputConstants.Type type, int code) {
+        return new KeyMapping("key.tetraform." + name, KeyConflictContext.IN_GAME, type, code, CATEGORY);
     }
 
     private Keys4() {}
 
     public static void register(RegisterKeyMappingsEvent e) {
         e.registerCategory(CATEGORY);
-        e.register(ANA);
-        e.register(KATA);
+        e.register(ROTATE_MODIFIER);
         e.register(ROTATE_ANA);
         e.register(ROTATE_KATA);
         e.register(RESET_SLICE);
+        e.register(ANA);
+        e.register(KATA);
     }
 }
