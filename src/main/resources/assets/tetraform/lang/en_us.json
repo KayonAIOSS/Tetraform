@@ -1,0 +1,10 @@
+{
+  "block.tetraform.slice_anchor": "Slice Anchor",
+  "key.category.tetraform.tetraform": "Tetraform (4D)",
+  "key.tetraform.ana": "Move ana (+W)",
+  "key.tetraform.kata": "Move kata (-W)",
+  "key.tetraform.rotate_ana": "Rotate view into +W",
+  "key.tetraform.rotate_kata": "Rotate view into -W",
+  "key.tetraform.reset_slice": "Reset slice to XYZ",
+  "dimension.tetraform.tesseract": "The Tesseract"
+}
