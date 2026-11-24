@@ -21,6 +21,7 @@ public final class TetraformClient {
     public TetraformClient(IEventBus modBus, ModContainer container) {
         modBus.addListener(Keys4::register);
         modBus.addListener(ClientNet4::register);
+        modBus.addListener(CompassProperties4::register);
         NeoForge.EVENT_BUS.addListener(SliceMesher::onAddSectionGeometry);
         NeoForge.EVENT_BUS.addListener(EntityRenderer4::onSubmit);
         NeoForge.EVENT_BUS.addListener(Interaction4::onInteraction);
