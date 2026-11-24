@@ -11,6 +11,8 @@ public final class Column4 {
     public static final int HEIGHT = SECTIONS * Section4.SIZE;
 
     public final int cx, cz, cw;
+    /** Entities a freshly generated column spawns once (structure villagers, animals); never saved. */
+    public java.util.List<Structures4.PendingEntity> pendingEntities;
     private final Section4[] sections = new Section4[SECTIONS];
     /** Index (w<<8 | z<<4 | x): y of the topmost opaque block + 1 (0 if none). */
     private final short[] heightmap = new short[4096];

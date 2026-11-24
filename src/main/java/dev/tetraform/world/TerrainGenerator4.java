@@ -39,6 +39,9 @@ public final class TerrainGenerator4 {
     private final Noise4 caves;
     private final Noise4 detail;
 
+    /** Set by the server once structure templates are available. */
+    public volatile Structures4 structures;
+
     public TerrainGenerator4(long seed) {
         this.seed = seed;
         this.height = new Noise4(seed);
@@ -128,12 +131,18 @@ public final class TerrainGenerator4 {
             // vegetation
             if (!underwater && !beach && !snowy && col.get(lx, h, lz, lw) == GRASS) {
                 double r = rand(x, h, z, w);
+                if (r < 0.06 && structures != null && structures.reserved(x, z, w)) r = 1;
                 if (r < 0.0035 && lx >= 2 && lx <= 13 && lz >= 2 && lz <= 13 && lw >= 2 && lw <= 13 && h < Column4.HEIGHT - 12) {
                     placeTree(col, lx, h + 1, lz, lw, x, z, w);
                 } else if (r < 0.06) {
                     col.set(lx, h + 1, lz, lw, r < 0.008 ? POPPY : r < 0.012 ? DANDELION : SHORT_GRASS);
                 }
             }
+        }
+        Structures4 st = structures;
+        if (st != null) {
+            var ents = st.decorate(col);
+            if (!ents.isEmpty()) col.pendingEntities = ents;
         }
         col.recomputeHeightmap();
         col.setDirty(true);

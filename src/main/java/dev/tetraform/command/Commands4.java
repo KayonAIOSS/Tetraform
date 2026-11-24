@@ -94,6 +94,10 @@ public final class Commands4 {
                 .then(Commands.literal("enter").executes(Commands4::enter))
                 .then(Commands.literal("leave").executes(Commands4::leave))
                 .then(Commands.literal("where").executes(Commands4::where))
+                .then(Commands.literal("locate").executes(c -> locate(c, null))
+                        .then(Commands.argument("kind", com.mojang.brigadier.arguments.StringArgumentType.word())
+                                .suggests((c, b) -> net.minecraft.commands.SharedSuggestionProvider.suggest(new String[]{"village", "ruined_portal", "igloo", "shipwreck"}, b))
+                                .executes(c -> locate(c, com.mojang.brigadier.arguments.StringArgumentType.getString(c, "kind")))))
                 .then(Commands.literal("reset").executes(c -> rotate(c, 0, true)))
                 .then(Commands.literal("rotate").then(Commands.argument("degrees", DoubleArgumentType.doubleArg(-360, 360))
                         .executes(c -> rotate(c, DoubleArgumentType.getDouble(c, "degrees"), false))))
@@ -264,6 +268,20 @@ public final class Commands4 {
             return 0;
         }
         c.getSource().sendSuccess(() -> Component.translatable("commands.summon.success", e.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int locate(CommandContext<CommandSourceStack> c, String kind) throws CommandSyntaxException {
+        ServerWorld4 w = world(c);
+        var st = w.generator().structures;
+        Vec4 from = c.getSource().getEntity() instanceof ServerPlayer p ? w.pos4(p)
+                : new Vec4(c.getSource().getPosition().x, c.getSource().getPosition().y, c.getSource().getPosition().z, 0.5);
+        String r = st == null ? null : st.locate(from, kind);
+        if (r == null) {
+            c.getSource().sendFailure(Component.literal("No 4D structure found nearby"));
+            return 0;
+        }
+        c.getSource().sendSuccess(() -> Component.literal("Nearest " + r), false);
         return 1;
     }
 

@@ -10,6 +10,7 @@ import dev.tetraform.math.SliceFrame;
 import dev.tetraform.math.Vec4;
 import dev.tetraform.net.Net4;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -74,6 +75,7 @@ public final class ServerWorld4 {
         this.server = server;
         this.level = level;
         this.generator = new TerrainGenerator4(level.getSeed());
+        this.generator.structures = new Structures4(server, generator, level.getSeed());
         int threads = Config4.GEN_THREADS.get();
         if (threads <= 0) threads = Math.max(1, Math.min(6, Runtime.getRuntime().availableProcessors() - 2));
         this.workers = Executors.newFixedThreadPool(threads, r -> {
@@ -288,8 +290,26 @@ public final class ServerWorld4 {
         level4.columns.put(key, c);
         loadBlockEntities(c);
         resumeFluids(c);
+        spawnPending(c);
         lastNeeded.put(key, tick);
         return c;
+    }
+
+    /** Spawns a newly generated column's structure entities (villagers, animals) exactly once. */
+    private void spawnPending(Column4 c) {
+        var list = c.pendingEntities;
+        if (list == null) return;
+        c.pendingEntities = null;
+        for (Structures4.PendingEntity pe : list) {
+            String id = pe.tag().getStringOr("id", "");
+            var type = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getOptional(net.minecraft.resources.Identifier.tryParse(id));
+            if (type.isEmpty()) continue;
+            CompoundTag tag = pe.tag().copy();
+            tag.remove("Pos");
+            tag.remove("UUID");
+            net.minecraft.world.entity.Entity e = spawn(type.get(), pe.pos(), net.minecraft.world.entity.EntitySpawnReason.STRUCTURE, tag);
+            if (e instanceof net.minecraft.world.entity.Mob m) m.setPersistenceRequired();
+        }
     }
 
     private static boolean flowing(BlockState s) {
@@ -329,6 +349,7 @@ public final class ServerWorld4 {
                 if (level4.columns.putIfAbsent(e.getKey(), c) == null) {
                     loadBlockEntities(c);
                     resumeFluids(c);
+                    spawnPending(c);
                 }
             } catch (Exception ex) {
                 Tetraform.LOGGER.error("4D column generation failed", ex);

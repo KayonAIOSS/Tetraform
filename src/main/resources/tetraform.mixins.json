@@ -12,7 +12,8 @@
     "TargetingSliceMixin",
     "ProjectileSliceMixin",
     "PlayerTouchSliceMixin",
-    "MobAttackSliceMixin"
+    "MobAttackSliceMixin",
+    "StructureTemplateAccessor"
   ],
   "client": [
     "ClientInputAccessor",
