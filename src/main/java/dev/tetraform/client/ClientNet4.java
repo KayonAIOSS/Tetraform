@@ -49,16 +49,6 @@ public final class ClientNet4 {
                 SliceManager.markBlock(b);
             }
         });
-        e.register(Net4.EntitiesS2C.TYPE, (p, ctx) -> {
-            java.util.Set<Integer> seen = new java.util.HashSet<>();
-            for (Net4.EntityView v : p.entities()) {
-                ClientState4.EntityState s = ClientState4.ENTITIES.computeIfAbsent(v.id(), k -> new ClientState4.EntityState());
-                s.prev = s.now == null ? v : s.now;
-                s.now = v;
-                seen.add(v.id());
-            }
-            ClientState4.ENTITIES.keySet().retainAll(seen);
-        });
         e.register(Net4.Teleport4S2C.TYPE, (p, ctx) -> {
             if (p.reset()) {
                 generation++;

@@ -51,16 +51,12 @@ public final class ClientState4 {
 
     // targeting
     public static Level4.Hit target;
-    public static int targetEntity = -1;
+    /** Vanilla entity under the crosshair (found with a 4D ray), or null. */
+    public static net.minecraft.world.entity.Entity targetEntity;
     public static BlockPos4 breaking;
     public static float breakProgress;
 
-    public static final class EntityState {
-        public Net4.EntityView now;
-        public Net4.EntityView prev;
-    }
 
-    public static final Map<Integer, EntityState> ENTITIES = new HashMap<>();
 
     public static Vec4 eye() {
         return pos.add(0, 1.62, 0, 0);
@@ -68,12 +64,11 @@ public final class ClientState4 {
 
     public static void reset() {
         LEVEL.clear();
-        ENTITIES.clear();
         hasPos = false;
         waitingForTerrain = true;
         vel = Vec4.ZERO;
         target = null;
-        targetEntity = -1;
+        targetEntity = null;
         breaking = null;
         breakProgress = 0;
     }

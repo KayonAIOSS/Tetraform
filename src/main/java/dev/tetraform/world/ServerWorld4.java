@@ -3,8 +3,6 @@ package dev.tetraform.world;
 import dev.tetraform.Config4;
 import dev.tetraform.PlayerState4;
 import dev.tetraform.Tetraform;
-import dev.tetraform.entity.Entity4;
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.math.AABB4;
 import dev.tetraform.math.BlockPos4;
 import dev.tetraform.math.Direction4;
@@ -48,7 +46,6 @@ public final class ServerWorld4 {
     private final Map<Long, CompletableFuture<Column4>> loading = new HashMap<>();
     private final Map<Long, Long> lastNeeded = new HashMap<>();
     private final Map<UUID, Tracker> trackers = new HashMap<>();
-    private final Map<Integer, Entity4> entities = new LinkedHashMap<>();
     private final Map<Long, BlockEntities4.BE4> blockEntities = new HashMap<>();
     private final Set<Long> changedBlocks = new LinkedHashSet<>();
     private final PriorityQueue<Scheduled> scheduled = new PriorityQueue<>();
@@ -203,9 +200,10 @@ public final class ServerWorld4 {
     public void sendTeleport(ServerPlayer p, boolean reset) {
         PlayerState4 st = state(p);
         st.lastUpdate = tick;
-        double[] rp = PlayerState4.renderPosition(st.frame, st.pos);
+        // the server keeps players' vanilla positions in true world coordinates (x, y, z); W is separate
+        W4.set(p, st.pos.w());
         if (p.level() == level) {
-            p.connection.teleport(rp[0], rp[1], rp[2], p.getYRot(), p.getXRot());
+            p.connection.teleport(st.pos.x(), st.pos.y(), st.pos.z(), p.getYRot(), p.getXRot());
         }
         PacketDistributor.sendToPlayer(p, new Net4.Teleport4S2C(st.pos.x(), st.pos.y(), st.pos.z(), st.pos.w(), st.frame.values(), reset));
         Tracker t = trackers.get(p.getUUID());
@@ -229,8 +227,8 @@ public final class ServerWorld4 {
         if (frame != null) st.frame.set(frame);
         loadNow((int) Math.floor(target.x()) >> 4, (int) Math.floor(target.z()) >> 4, (int) Math.floor(target.w()) >> 4);
         if (p.level() != level) {
-            double[] rp = PlayerState4.renderPosition(st.frame, st.pos);
-            p.teleportTo(level, rp[0], rp[1], rp[2], Set.of(), yaw, pitch, true);
+            W4.set(p, st.pos.w());
+            p.teleportTo(level, st.pos.x(), st.pos.y(), st.pos.z(), Set.of(), yaw, pitch, true);
             // onPlayerEnter is triggered by the dimension change event
         } else {
             sendTeleport(p, false);
@@ -252,6 +250,7 @@ public final class ServerWorld4 {
             return;
         }
         st.pos = np;
+        W4.set(p, np.w());
         SliceFrame f = new SliceFrame(m.frame());
         f.orthonormalize();
         st.frame.set(f);
@@ -545,33 +544,32 @@ public final class ServerWorld4 {
         }
     }
 
-    // ------------------------------------------------------------------ entities
+    // ------------------------------------------------------------------ entities (vanilla entities with a W)
 
-    public Entity4 addEntity(Entity4 e) {
-        entities.put(e.id, e);
-        return e;
-    }
-
-    public Collection<Entity4> entities() {
-        return entities.values();
-    }
-
-    public Entity4 entity(int id) {
-        return entities.get(id);
-    }
-
+    /** Drops an item as a vanilla item entity at a 4D position. */
     public void dropItem(Vec4 pos, ItemStack stack) {
         if (stack.isEmpty()) return;
-        Entity4 e = new Entity4(Entity4Type.ITEM, pos);
-        e.stack = stack.copy();
-        e.pickupDelay = 10;
-        double u = random.nextDouble() * 2 - 1, th = random.nextDouble() * Math.PI * 2, r = Math.sqrt(1 - u * u);
-        e.vel = new Vec4(r * Math.cos(th) * 0.1, 0.2, u * 0.1, r * Math.sin(th) * 0.1);
-        addEntity(e);
+        net.minecraft.world.entity.item.ItemEntity e = new net.minecraft.world.entity.item.ItemEntity(level, pos.x(), pos.y(), pos.z(), stack.copy());
+        W4.set(e, pos.w());
+        e.setDefaultPickUpDelay();
+        level.addFreshEntity(e);
+    }
+
+    /** Vanilla entities (not players) whose 4D box intersects {@code box}. */
+    public List<net.minecraft.world.entity.Entity> entitiesIn(AABB4 box) {
+        List<net.minecraft.world.entity.Entity> out = new ArrayList<>();
+        net.minecraft.world.phys.AABB a3 = new net.minecraft.world.phys.AABB(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ());
+        for (net.minecraft.world.entity.Entity e : level.getEntities((net.minecraft.world.entity.Entity) null, a3, x -> true)) {
+            double w = W4.get(e), hw = e.getBbWidth() / 2;
+            if (w + hw > box.minW() && w - hw < box.maxW()) out.add(e);
+        }
+        return out;
     }
 
     public boolean anyEntityIn(AABB4 box) {
-        for (Entity4 e : entities.values()) if (e.type != Entity4Type.ITEM && e.box().intersects(box)) return true;
+        for (net.minecraft.world.entity.Entity e : entitiesIn(box)) {
+            if (e instanceof net.minecraft.world.entity.LivingEntity && !e.isSpectator()) return true;
+        }
         for (ServerPlayer p : level.players()) {
             if (p.isSpectator()) continue;
             if (AABB4.ofCenterBottom(state(p).pos, 0.3, 1.8).intersects(box)) return true;
@@ -579,67 +577,110 @@ public final class ServerWorld4 {
         return false;
     }
 
-    private void tickEntities() {
-        Iterator<Entity4> it = entities.values().iterator();
-        while (it.hasNext()) {
-            Entity4 e = it.next();
-            if (e.removed) { it.remove(); continue; }
-            e.tick(this);
-            if (e.removed) it.remove();
-        }
-    }
+    private static final net.minecraft.world.entity.EntityType<?>[] DAY = {
+            net.minecraft.world.entity.EntityTypes.COW, net.minecraft.world.entity.EntityTypes.PIG,
+            net.minecraft.world.entity.EntityTypes.SHEEP, net.minecraft.world.entity.EntityTypes.CHICKEN};
+    private static final net.minecraft.world.entity.EntityType<?>[] NIGHT = {
+            net.minecraft.world.entity.EntityTypes.ZOMBIE, net.minecraft.world.entity.EntityTypes.SKELETON,
+            net.minecraft.world.entity.EntityTypes.CREEPER, net.minecraft.world.entity.EntityTypes.SPIDER};
 
+    /**
+     * Natural spawning of vanilla mobs at 4D positions (vanilla spawning can't see the 4D terrain): animals by
+     * day on grass, monsters at night. Each mob gets its own W and then lives in that slice.
+     */
     private void spawnMobs() {
         if (!Config4.SPAWN_MOBS.get() || tick % 40 != 0) return;
+        if (!level.getGameRules().get(net.minecraft.world.level.gamerules.GameRules.SPAWN_MOBS)) return;
         int cap = Config4.MOB_CAP.get();
         for (ServerPlayer p : level.players()) {
             Vec4 pp = state(p).pos;
             int near = 0;
-            for (Entity4 e : entities.values()) if (e.type != Entity4Type.ITEM && e.pos.distanceSqr(pp) < 64 * 64) near++;
+            for (net.minecraft.world.entity.Entity e : level.getEntities((net.minecraft.world.entity.Entity) null, p.getBoundingBox().inflate(64), x -> x instanceof net.minecraft.world.entity.Mob)) {
+                if (Math.abs(W4.get(e) - pp.w()) < 64) near++;
+            }
             if (near >= cap) continue;
             double u = random.nextDouble() * 2 - 1, th = random.nextDouble() * Math.PI * 2, r = Math.sqrt(1 - u * u);
-            double dist = 14 + random.nextDouble() * 22;
+            double dist = 16 + random.nextDouble() * 24;
             double x = pp.x() + r * Math.cos(th) * dist, z = pp.z() + u * dist, w = pp.w() + r * Math.sin(th) * dist;
             int bx = (int) Math.floor(x), bz = (int) Math.floor(z), bw = (int) Math.floor(w);
             if (!level4.isLoaded(bx, bz, bw)) continue;
             int y = level4.heightAt(bx, bz, bw);
             BlockState ground = level4.getBlock(bx, y - 1, bz, bw);
-            if (y <= 1 || !ground.getFluidState().isEmpty() || !level4.getBlock(bx, y, bz, bw).isAir()) continue;
+            if (y <= 1 || !ground.getFluidState().isEmpty() || !level4.getBlock(bx, y, bz, bw).isAir()
+                    || !level4.getBlock(bx, y + 1, bz, bw).isAir()) continue;
             boolean night = level.isDarkOutside();
-            Entity4Type type = night && random.nextFloat() < 0.7f ? Entity4Type.STALKER : Entity4Type.HYPERHOG;
-            Entity4 e = new Entity4(type, new Vec4(bx + 0.5, y, bz + 0.5, bw + 0.5));
-            e.frame.turnForwardTowards(random.nextDouble() - 0.5, random.nextDouble() - 0.5, random.nextDouble() - 0.5, Math.PI);
-            addEntity(e);
+            if (!night && !ground.is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK)) continue;
+            net.minecraft.world.entity.EntityType<?>[] pool = night ? NIGHT : DAY;
+            net.minecraft.world.entity.EntityType<?> type = pool[random.nextInt(pool.length)];
+            spawn(type, new Vec4(bx + 0.5, y, bz + 0.5, bw + 0.5), net.minecraft.world.entity.EntitySpawnReason.NATURAL);
         }
     }
 
-    private void sendEntities() {
-        List<ServerPlayer> players = level.players();
-        for (ServerPlayer p : players) {
-            Vec4 pp = state(p).pos;
-            List<Net4.EntityView> views = new ArrayList<>();
-            for (Entity4 e : entities.values()) {
-                if (e.pos.distanceSqr(pp) > 80 * 80) continue;
-                int extra = e.type == Entity4Type.ITEM ? BuiltInRegistries.ITEM.getId(e.stack.getItem()) : (e.baby ? 1 : 0) | (e.loveTicks > 0 ? 2 : 0);
-                views.add(view(e.id, e.type, e.pos, e.frame, extra, e.hurtTime));
-            }
-            for (ServerPlayer o : players) {
-                if (o == p || o.isSpectator()) continue;
-                PlayerState4 os = state(o);
-                if (os.pos.distanceSqr(pp) > 80 * 80) continue;
-                SliceFrame facing = os.frame.copy();
-                facing.rotateInSlice(Math.toRadians(o.getYRot()));
-                views.add(view(o.getId(), Entity4Type.PLAYER, os.pos, facing, 0, o.hurtTime));
-            }
-            PacketDistributor.sendToPlayer(p, new Net4.EntitiesS2C(views.toArray(new Net4.EntityView[0])));
-        }
+    /** Creates a vanilla entity at a 4D position; mob spawn logic runs inside that entity's slice. */
+    public net.minecraft.world.entity.Entity spawn(net.minecraft.world.entity.EntityType<?> type, Vec4 pos, net.minecraft.world.entity.EntitySpawnReason reason) {
+        return spawn(type, pos, reason, null);
     }
 
-    private static Net4.EntityView view(int id, Entity4Type t, Vec4 pos, SliceFrame f, int extra, int hurt) {
-        float[] fr = new float[9];
-        double[] v = f.values();
-        for (int i = 0; i < 9; i++) fr[i] = (float) v[i];
-        return new Net4.EntityView(id, (byte) t.ordinal(), (float) pos.x(), (float) pos.y(), (float) pos.z(), (float) pos.w(), fr, extra, (byte) hurt);
+    public net.minecraft.world.entity.Entity spawn(net.minecraft.world.entity.EntityType<?> type, Vec4 pos, net.minecraft.world.entity.EntitySpawnReason reason,
+                                                   net.minecraft.nbt.CompoundTag nbt) {
+        net.minecraft.world.entity.Entity e = type.create(level, reason);
+        if (e == null) return null;
+        if (nbt != null && !nbt.isEmpty()) {
+            try (var reporter = new net.minecraft.util.ProblemReporter.ScopedCollector(org.slf4j.LoggerFactory.getLogger("tetraform"))) {
+                e.load(net.minecraft.world.level.storage.TagValueInput.create(reporter, level.registryAccess(), nbt));
+            }
+        }
+        e.snapTo(pos.x(), pos.y(), pos.z(), random.nextFloat() * 360f, 0f);
+        W4.set(e, pos.w());
+        Access4.Mapper prev = Access4.push(Access4.server(this, pos.w()));
+        try {
+            if (e instanceof net.minecraft.world.entity.Mob mob) {
+                mob.finalizeSpawn(level, level.getCurrentDifficultyAt(e.blockPosition()), reason, null);
+            }
+            level.addFreshEntity(e);
+        } finally {
+            Access4.pop(prev);
+        }
+        return e;
+    }
+
+    // ------------------------------------------------------------------ creatures moving through W
+
+    private final Map<net.minecraft.world.entity.Entity, Double> wTargets = new WeakHashMap<>();
+
+    /**
+     * Gives every vanilla mob a fourth degree of freedom: now and then a mob steps to a neighbouring W layer when
+     * there is room there (feet and head clear, ground below), and a mob with a target lines its W up with it.
+     */
+    public void tickMobW(net.minecraft.world.entity.Mob mob) {
+        if (mob.isNoAi() || mob.isPassenger()) return;
+        double w = W4.get(mob);
+        Double target = wTargets.get(mob);
+        net.minecraft.world.entity.LivingEntity t = mob.getTarget();
+        if (t != null && Math.abs(W4.get(t) - w) > 0.02) target = W4.get(t);
+        if (target == null && mob.getNavigation().isDone() && random.nextInt(400) == 0) {
+            double nw = Math.floor(w) + 0.5 + (random.nextBoolean() ? 1 : -1);
+            if (roomAt(mob, nw)) target = nw;
+        }
+        if (target == null) return;
+        double step = Math.max(-0.1, Math.min(0.1, target - w));
+        double nw = w + step;
+        if (!roomAt(mob, nw)) {
+            wTargets.remove(mob);
+            return;
+        }
+        W4.set(mob, Math.abs(target - nw) < 1.0E-3 ? target : nw);
+        if (Math.abs(target - nw) < 1.0E-3) wTargets.remove(mob);
+        else wTargets.put(mob, target);
+    }
+
+    private boolean roomAt(net.minecraft.world.entity.Entity e, double w) {
+        AABB4 box = new AABB4(e.getBoundingBox().minX, e.getBoundingBox().minY, e.getBoundingBox().minZ, w - e.getBbWidth() / 2,
+                e.getBoundingBox().maxX, e.getBoundingBox().maxY, e.getBoundingBox().maxZ, w + e.getBbWidth() / 2);
+        if (!level4.collisions(box.inflate(-0.01)).isEmpty()) return false;
+        // something to stand on in the new layer
+        BlockPos4 below = new Vec4(e.getX(), e.getY() - 0.5, e.getZ(), w).toBlockPos();
+        return !e.onGround() || BlockShapes4.collision(level4.getBlock(below)) != null;
     }
 
     public void explodeAt(Vec4 pos, float power) {
@@ -694,10 +735,8 @@ public final class ServerWorld4 {
             updateTracker(p, t);
         }
         runScheduled();
-        tickEntities();
         spawnMobs();
         flushBlockUpdates();
-        sendEntities();
         if (tick % 200 == 0) unloadStale();
     }
 

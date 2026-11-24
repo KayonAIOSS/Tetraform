@@ -55,47 +55,6 @@ public final class Net4 {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    /** One visible 4D entity in a snapshot. Frame = 9 floats (orientation in x,z,w). */
-    public record EntityView(int id, byte type, float x, float y, float z, float w, float[] frame, int extra, byte hurt) {
-        static void write(ByteBuf buf, EntityView v) {
-            buf.writeInt(v.id);
-            buf.writeByte(v.type);
-            buf.writeFloat(v.x);
-            buf.writeFloat(v.y);
-            buf.writeFloat(v.z);
-            buf.writeFloat(v.w);
-            for (int i = 0; i < 9; i++) buf.writeFloat(v.frame[i]);
-            buf.writeInt(v.extra);
-            buf.writeByte(v.hurt);
-        }
-
-        static EntityView read(ByteBuf buf) {
-            int id = buf.readInt();
-            byte t = buf.readByte();
-            float x = buf.readFloat(), y = buf.readFloat(), z = buf.readFloat(), w = buf.readFloat();
-            float[] f = new float[9];
-            for (int i = 0; i < 9; i++) f[i] = buf.readFloat();
-            return new EntityView(id, t, x, y, z, w, f, buf.readInt(), buf.readByte());
-        }
-    }
-
-    /** Per-tick snapshot of the 4D entities (mobs, items and other players) near the receiving player. */
-    public record EntitiesS2C(EntityView[] entities) implements CustomPacketPayload {
-        public static final Type<EntitiesS2C> TYPE = typeOf("entities");
-        public static final StreamCodec<RegistryFriendlyByteBuf, EntitiesS2C> CODEC = StreamCodec.of(
-                (buf, v) -> {
-                    buf.writeVarInt(v.entities.length);
-                    for (EntityView e : v.entities) EntityView.write(buf, e);
-                },
-                buf -> {
-                    int n = Math.min(buf.readVarInt(), 4096);
-                    EntityView[] a = new EntityView[n];
-                    for (int i = 0; i < n; i++) a[i] = EntityView.read(buf);
-                    return new EntitiesS2C(a);
-                });
-        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
-    }
-
     /** Authoritative 4D position (and optionally frame) from the server: teleports, respawn, entering. */
     public record Teleport4S2C(double x, double y, double z, double w, double[] frame, boolean reset) implements CustomPacketPayload {
         public static final Type<Teleport4S2C> TYPE = typeOf("teleport4");
@@ -200,7 +159,6 @@ public final class Net4 {
         r.playToClient(ColumnS2C.TYPE, ColumnS2C.CODEC);
         r.playToClient(UnloadColumnsS2C.TYPE, UnloadColumnsS2C.CODEC);
         r.playToClient(BlockUpdatesS2C.TYPE, BlockUpdatesS2C.CODEC);
-        r.playToClient(EntitiesS2C.TYPE, EntitiesS2C.CODEC);
         r.playToClient(Teleport4S2C.TYPE, Teleport4S2C.CODEC);
         r.playToClient(Impulse4S2C.TYPE, Impulse4S2C.CODEC);
         r.playToClient(OpenCommandBlock4S2C.TYPE, OpenCommandBlock4S2C.CODEC);

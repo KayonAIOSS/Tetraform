@@ -1,6 +1,5 @@
 package dev.tetraform.client;
 
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.entity.Physics4;
 import dev.tetraform.math.AABB4;
 import dev.tetraform.math.BlockPos4;
@@ -36,17 +35,17 @@ public final class Interaction4 {
         boolean fluids = player.getMainHandItem().is(Items.BUCKET);
         Level4.Hit hit = ClientState4.LEVEL.raycast(eye, dir, reach, fluids);
         double blockDist = hit == null ? reach : hit.point().distance(eye);
-        int bestEntity = -1;
-        double bestDist = Math.min(blockDist, 3.5);
-        for (ClientState4.EntityState es : ClientState4.ENTITIES.values()) {
-            Net4.EntityView v = es.now;
-            Entity4Type t = Entity4Type.VALUES[Math.floorMod(v.type(), Entity4Type.VALUES.length)];
-            if (t == Entity4Type.ITEM) continue;
-            AABB4 box = AABB4.ofCenterBottom(new Vec4(v.x(), v.y(), v.z(), v.w()), t.halfWidth, t.height);
+        net.minecraft.world.entity.Entity bestEntity = null;
+        double bestDist = Math.min(blockDist, player.entityInteractionRange());
+        for (net.minecraft.world.entity.Entity e : Minecraft.getInstance().level.entitiesForRendering()) {
+            if (e == player || !e.isPickable() || e.isSpectator()) continue;
+            net.minecraft.world.phys.AABB bb = e.getBoundingBox();
+            double w = dev.tetraform.world.W4.get(e), hw = Math.max(0.15, e.getBbWidth() / 2);
+            AABB4 box = new AABB4(bb.minX, bb.minY, bb.minZ, w - hw, bb.maxX, bb.maxY, bb.maxZ, w + hw);
             double d = Physics4.rayBox(eye, dir, box);
             if (!Double.isNaN(d) && d < bestDist) {
                 bestDist = d;
-                bestEntity = v.id();
+                bestEntity = e;
             }
         }
         ClientState4.target = hit;
@@ -55,7 +54,7 @@ public final class Interaction4 {
         // continuous breaking while the attack key is held
         Minecraft mc = Minecraft.getInstance();
         boolean attacking = mc.options.keyAttack.isDown() && mc.gui.screen() == null;
-        if (!attacking || hit == null || bestEntity >= 0) {
+        if (!attacking || hit == null || bestEntity != null) {
             ClientState4.breaking = null;
             ClientState4.breakProgress = 0;
             return;
@@ -108,13 +107,13 @@ public final class Interaction4 {
         LocalPlayer player = mc.player;
         if (player == null) return;
         Level4.Hit hit = ClientState4.target;
-        int ent = ClientState4.targetEntity;
+        net.minecraft.world.entity.Entity ent = ClientState4.targetEntity;
         if (event.isAttack()) {
             event.setCanceled(true);
             event.setSwingHand(true);
-            if (ent >= 0) {
-                send(Net4.ACTION_ATTACK, BlockPos4.ZERO, null, ent);
-                player.resetAttackStrengthTicker();
+            if (ent != null) {
+                // a vanilla entity: use vanilla's own attack (server checks reach in world coordinates)
+                mc.gameMode.attack(player, ent);
             } else if (hit != null) {
                 ClientState4.breaking = hit.pos();
                 if (player.isCreative() && attackCooldown == 0) {
@@ -124,13 +123,14 @@ public final class Interaction4 {
                 }
             }
         } else if (event.isUseItem()) {
-            if (ent >= 0) {
-                // right-click on a 4D creature (instead of placing a block behind it)
+            if (ent != null) {
+                // right-click a creature: vanilla interaction (trading, breeding, shearing, riding...)
                 event.setCanceled(true);
                 if (useCooldown > 0) return;
                 useCooldown = 4;
-                event.setSwingHand(true);
-                send(Net4.ACTION_USE_ENTITY, BlockPos4.ZERO, null, ent);
+                var hitResult = new net.minecraft.world.phys.EntityHitResult(ent, ent.position().add(0, ent.getBbHeight() / 2, 0));
+                var result = mc.gameMode.interact(player, ent, hitResult, event.getHand());
+                if (result.consumesAction()) event.setSwingHand(true);
                 return;
             }
             if (hit == null) return; // let vanilla handle eating, bows, etc.

@@ -8,8 +8,6 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.tree.CommandNode;
 import dev.tetraform.PlayerState4;
 import dev.tetraform.Tetraform;
-import dev.tetraform.entity.Entity4;
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.math.BlockPos4;
 import dev.tetraform.math.SliceFrame;
 import dev.tetraform.math.Vec4;
@@ -35,7 +33,7 @@ import java.util.function.Predicate;
 /**
  * Four-dimensional versions of the vanilla world commands. They are merged into the vanilla command roots, so
  * {@code /setblock x y z w block}, {@code /fill x1 y1 z1 w1 x2 y2 z2 w2 block} (8 coordinates instead of 6),
- * {@code /clone}, {@code /tp x y z w} and {@code /summon tetraform:<mob> x y z w} all work. Three-coordinate forms
+ * {@code /clone}, {@code /tp x y z w} and {@code /summon <entity> x y z w} all work. Three-coordinate forms
  * still reach vanilla.
  */
 public final class Commands4 {
@@ -82,15 +80,15 @@ public final class Commands4 {
                                             .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))));
         }
 
-        var summon = Commands.literal("summon").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS));
-        for (Entity4Type t : Entity4Type.VALUES) {
-            if (t == Entity4Type.PLAYER || t == Entity4Type.ITEM) continue;
-            String lit = "tetraform:" + t.name().toLowerCase(Locale.ROOT);
-            summon.then(Commands.literal(lit)
-                    .executes(c -> summon(c, t, Pos4Argument.origin(c.getSource())))
-                    .then(Commands.argument("pos4", Pos4Argument.pos4()).executes(c -> summon(c, t, Pos4Argument.getVec(c, "pos4")))));
-        }
-        d.register(summon);
+        // merged into vanilla's "/summon <entity>" node: a 4-number position spawns any vanilla entity in 4D
+        d.register(Commands.literal("summon").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                .then(Commands.argument("entity", net.minecraft.commands.arguments.ResourceArgument.resource(ctx, net.minecraft.core.registries.Registries.ENTITY_TYPE))
+                        .then(Commands.argument("pos4", Pos4Argument.pos4())
+                                .executes(c -> summon(c, net.minecraft.commands.arguments.ResourceArgument.getSummonableEntityType(c, "entity").value(),
+                                        Pos4Argument.getVec(c, "pos4"), null))
+                                .then(Commands.argument("nbt", net.minecraft.commands.arguments.CompoundTagArgument.compoundTag())
+                                        .executes(c -> summon(c, net.minecraft.commands.arguments.ResourceArgument.getSummonableEntityType(c, "entity").value(),
+                                                Pos4Argument.getVec(c, "pos4"), net.minecraft.commands.arguments.CompoundTagArgument.getCompoundTag(c, "nbt")))))));
 
         d.register(Commands.literal("tetra")
                 .then(Commands.literal("enter").executes(Commands4::enter))
@@ -109,10 +107,10 @@ public final class Commands4 {
                 .then(Commands.literal("trace").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("pos4", Pos4Argument.pos4()).executes(Commands4::trace)))
                 .then(Commands.literal("fluids").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(Commands4::fluids))
-                .then(Commands.literal("killmobs").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(Commands4::killMobs)));
+                );
 
         // Make the 4D branches win over vanilla's when both parse the same input (e.g. "tp 1 2 3 4").
-        for (String root : new String[]{"setblock", "fill", "clone", "tp", "teleport"}) {
+        for (String root : new String[]{"setblock", "fill", "clone", "tp", "teleport", "summon"}) {
             CommandNode<CommandSourceStack> node = d.getRoot().getChild(root);
             if (node != null) prioritize(node);
         }
@@ -129,6 +127,7 @@ public final class Commands4 {
             reorder((Map<String, Object>) children.get(node));
             reorder((Map<String, Object>) arguments.get(node));
             CommandNode<CommandSourceStack> targets = node.getChild("targets");
+            if (targets == null) targets = node.getChild("entity");
             if (targets != null) {
                 reorder((Map<String, Object>) children.get(targets));
                 reorder((Map<String, Object>) arguments.get(targets));
@@ -255,11 +254,16 @@ public final class Commands4 {
         return players.size();
     }
 
-    private static int summon(CommandContext<CommandSourceStack> c, Entity4Type type, Vec4 pos) {
+    private static int summon(CommandContext<CommandSourceStack> c, net.minecraft.world.entity.EntityType<?> type, Vec4 pos,
+                              net.minecraft.nbt.CompoundTag nbt) {
         ServerWorld4 w = world(c);
         w.loadNow((int) Math.floor(pos.x()) >> 4, (int) Math.floor(pos.z()) >> 4, (int) Math.floor(pos.w()) >> 4);
-        w.addEntity(new Entity4(type, pos));
-        c.getSource().sendSuccess(() -> Component.literal("Summoned " + type.name().toLowerCase(Locale.ROOT) + " at " + pos), true);
+        var e = w.spawn(type, pos, net.minecraft.world.entity.EntitySpawnReason.COMMAND, nbt);
+        if (e == null) {
+            c.getSource().sendFailure(Component.literal("Unable to summon entity"));
+            return 0;
+        }
+        c.getSource().sendSuccess(() -> Component.translatable("commands.summon.success", e.getDisplayName()), true);
         return 1;
     }
 
@@ -397,12 +401,4 @@ public final class Commands4 {
         return 1;
     }
 
-    private static int killMobs(CommandContext<CommandSourceStack> c) {
-        ServerWorld4 w = world(c);
-        int n = 0;
-        for (Entity4 e : w.entities()) if (e.type != Entity4Type.PLAYER) { e.removed = true; n++; }
-        int k = n;
-        c.getSource().sendSuccess(() -> Component.literal("Removed " + k + " 4D entities"), true);
-        return n;
-    }
 }

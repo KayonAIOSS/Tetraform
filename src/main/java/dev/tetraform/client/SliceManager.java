@@ -38,6 +38,8 @@ public final class SliceManager {
                 // keep the player's render-space position fixed so rotating never moves the camera
                 offX = m.renderX(p.x(), p.z(), p.w()) - f.localX(p.x(), p.z(), p.w());
                 offZ = m.renderZ(p.x(), p.z(), p.w()) - f.localZ(p.x(), p.z(), p.w());
+                // back at zw = 0, render space is world space again (vanilla systems line up exactly)
+                if (Math.abs(f.zwAngle()) < 1.0E-9) { offX = 0; offZ = 0; }
             }
             ClientState4.mesh = new ClientState4.MeshParams(f.copy(), depth, offX, offZ, m.version() + 1);
             // Everything in view is rebuilt at once; vanilla/Sodium build the closest sections first.

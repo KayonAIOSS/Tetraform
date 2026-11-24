@@ -5,11 +5,22 @@
   "compatibilityLevel": "JAVA_25",
   "mixins": [
     "PlayerTravelMixin",
-    "ServerGamePacketListenerMixin"
+    "ServerGamePacketListenerMixin",
+    "LevelAccessMixin",
+    "LevelChunkAccessMixin",
+    "MobSunMixin",
+    "TargetingSliceMixin",
+    "ProjectileSliceMixin",
+    "PlayerTouchSliceMixin",
+    "MobAttackSliceMixin"
   ],
   "client": [
     "ClientInputAccessor",
     "CommandBlockEditScreenAccessor",
+    "ClientPacketListener4Mixin",
+    "LocalPlayerSendPositionMixin",
+    "EntityRenderTransformMixin",
+    "EntityVisibility4Mixin",
     "DebugPositionMixin",
     "DebugSectionMixin",
     "DebugLookingAtMixin",

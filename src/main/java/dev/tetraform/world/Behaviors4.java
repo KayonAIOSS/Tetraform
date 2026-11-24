@@ -1,8 +1,6 @@
 package dev.tetraform.world;
 
 import dev.tetraform.PlayerState4;
-import dev.tetraform.entity.Entity4;
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.math.AABB4;
 import dev.tetraform.math.BlockPos4;
 import dev.tetraform.math.Direction4;
@@ -463,10 +461,17 @@ public final class Behaviors4 {
             pl.hurtServer(world.serverLevel(), world.serverLevel().damageSources().generic(), dmg);
             world.knockPlayer(pl, pp.sub(c).normalize().scale((1 - d / reach) * 1.6));
         }
-        for (Entity4 e : world.entities()) {
-            double d = e.pos.distance(c);
+        AABB4 area = new AABB4(c.x() - reach, c.y() - reach, c.z() - reach, c.w() - reach, c.x() + reach, c.y() + reach, c.z() + reach, c.w() + reach);
+        for (net.minecraft.world.entity.Entity e : world.entitiesIn(area)) {
+            if (e instanceof ServerPlayer) continue;
+            Vec4 ep = new Vec4(e.getX(), e.getY() + e.getBbHeight() / 2, e.getZ(), W4.get(e));
+            double d = ep.distance(c);
             if (d > reach) continue;
-            e.hurt(world, (float) ((1 - d / reach) * 14), c, null);
+            double f = 1 - d / reach;
+            e.hurtServer(world.serverLevel(), world.serverLevel().damageSources().explosion(null, null), (float) (f * 14));
+            Vec4 push = ep.sub(c).normalize().scale(f * 1.6);
+            e.push(push.x(), Math.max(push.y(), 0.2), push.z());
+            W4.set(e, W4.get(e) + push.w() * 0.5);
         }
     }
 
@@ -484,7 +489,6 @@ public final class Behaviors4 {
         BlockPos4 pos = new BlockPos4(a.x(), a.y(), a.z(), a.w());
         Direction4 face = Direction4.VALUES[Math.floorMod(a.face(), 8)];
         switch (a.action()) {
-            case Net4.ACTION_ATTACK -> attack(p, st, a.entityId());
             case Net4.ACTION_BREAK -> {
                 if (eye(st).distance(pos.center()) > REACH) return;
                 breakBlock(p, pos);
@@ -501,7 +505,7 @@ public final class Behaviors4 {
                 if (eye(st).distance(pos.center()) > REACH + 1) return;
                 pick(p, get(pos));
             }
-            case Net4.ACTION_USE_ENTITY -> useEntity(p, st, a.entityId());
+
             default -> {}
         }
     }
@@ -523,37 +527,6 @@ public final class Behaviors4 {
         }
         p.connection.send(new net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket(inv.getSelectedSlot()));
         p.inventoryMenu.broadcastChanges();
-    }
-
-    /** Right-click on a 4D mob: feed hyperhogs (carrots, potatoes, beetroot) to heal and breed them. */
-    private void useEntity(ServerPlayer p, PlayerState4 st, int id) {
-        Entity4 e = world.entity(id);
-        if (e == null || e.pos.distance(st.pos) > 6) return;
-        ItemStack held = p.getMainHandItem();
-        if (e.type == Entity4Type.HYPERHOG && (held.is(Items.CARROT) || held.is(Items.POTATO) || held.is(Items.BEETROOT))) {
-            if (e.feed(world)) {
-                if (!p.hasInfiniteMaterials()) held.shrink(1);
-                world.serverLevel().playSound(null, p.blockPosition(), SoundEvents.GENERIC_EAT.value(), SoundSource.NEUTRAL, 1f, 1f);
-            }
-        }
-    }
-
-    private void attack(ServerPlayer p, PlayerState4 st, int id) {
-        float dmg = (float) p.getAttributeValue(Attributes.ATTACK_DAMAGE);
-        Entity4 e = world.entity(id);
-        if (e != null) {
-            if (e.pos.distance(st.pos) > 6) return;
-            e.hurt(world, dmg, st.pos, p);
-            p.resetAttackStrengthTicker();
-            return;
-        }
-        for (ServerPlayer o : world.players()) {
-            if (o.getId() == id && o != p) {
-                if (ServerWorld4.state(o).pos.distance(st.pos) > 6) return;
-                o.hurtServer(world.serverLevel(), world.serverLevel().damageSources().playerAttack(p), dmg);
-                world.knockPlayer(o, ServerWorld4.state(o).pos.sub(st.pos).withY(0).normalize().scale(0.5));
-            }
-        }
     }
 
     private void breakBlock(ServerPlayer p, BlockPos4 pos) {
