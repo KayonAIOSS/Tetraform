@@ -1,0 +1,18 @@
+{
+  "type": "tetraform:tesseract",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "biome": "minecraft:the_void",
+      "features": false,
+      "lakes": false,
+      "layers": [
+        {
+          "block": "tetraform:slice_anchor",
+          "height": 256
+        }
+      ],
+      "structure_overrides": []
+    }
+  }
+}
