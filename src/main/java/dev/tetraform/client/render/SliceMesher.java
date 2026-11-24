@@ -316,10 +316,9 @@ public final class SliceMesher {
         }
     }
 
-    /** 4D sky light: full above the (x, z, w) column's surface, fading with depth below it. */
+    /** 4D sky light (see {@link ClientLevel4#skyLight}). */
     public static int skyLight(ClientLevel4 level, int x, int y, int z, int w) {
-        int h = level.heightAt(x, z, w);
-        return y >= h ? 15 : Math.max(0, 15 - 3 * (h - y));
+        return level.skyLight(x, y, z, w);
     }
 
     /** 4D block light from a flat {x, y, z, w, emission} list (allocation-free). */
