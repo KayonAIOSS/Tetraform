@@ -72,10 +72,14 @@ public final class Commands4 {
         for (String name : new String[]{"tp", "teleport"}) {
             d.register(Commands.literal(name).requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                     .then(Commands.argument("location4", Pos4Argument.pos4())
-                            .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"))))
+                            .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"), null))
+                            .then(Commands.argument("rotation4", Rot3Argument.rot3())
+                                    .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))
                     .then(Commands.argument("targets", EntityArgument.players())
                             .then(Commands.argument("location4", Pos4Argument.pos4())
-                                    .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"))))));
+                                    .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"), null))
+                                    .then(Commands.argument("rotation4", Rot3Argument.rot3())
+                                            .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))));
         }
 
         var summon = Commands.literal("summon").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS));
@@ -100,6 +104,11 @@ public final class Commands4 {
                                 .executes(c -> explode(c, 4f))
                                 .then(Commands.argument("power", FloatArgumentType.floatArg(0.5f, 12f))
                                         .executes(c -> explode(c, FloatArgumentType.getFloat(c, "power"))))))
+                .then(Commands.literal("probe").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                        .then(Commands.argument("pos4", Pos4Argument.pos4()).executes(Commands4::probe)))
+                .then(Commands.literal("trace").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                        .then(Commands.argument("pos4", Pos4Argument.pos4()).executes(Commands4::trace)))
+                .then(Commands.literal("fluids").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(Commands4::fluids))
                 .then(Commands.literal("killmobs").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(Commands4::killMobs)));
 
         // Make the 4D branches win over vanilla's when both parse the same input (e.g. "tp 1 2 3 4").
@@ -228,10 +237,21 @@ public final class Commands4 {
         return n;
     }
 
-    private static int tp(CommandContext<CommandSourceStack> c, Collection<ServerPlayer> players, Vec4 to) {
+    private static int tp(CommandContext<CommandSourceStack> c, Collection<ServerPlayer> players, Vec4 to, Rot3Argument.Rot rot) {
         ServerWorld4 w = world(c);
-        for (ServerPlayer p : players) w.teleport(p, to, null);
-        c.getSource().sendSuccess(() -> Component.literal("Teleported " + players.size() + " player(s) to " + to), true);
+        for (ServerPlayer p : players) {
+            if (rot == null) {
+                w.teleport(p, to, null);
+            } else {
+                PlayerState4 st = ServerWorld4.state(p);
+                float yaw = (float) rot.yaw(p.getYRot());
+                float pitch = (float) Math.max(-90, Math.min(90, rot.pitch(p.getXRot())));
+                double zw = Math.toRadians(rot.zw(Math.toDegrees(st.frame.zwAngle())));
+                w.teleport(p, to, SliceFrame.zw(zw), yaw, pitch);
+            }
+        }
+        c.getSource().sendSuccess(() -> Component.literal("Teleported " + players.size() + " player(s) to " + to
+                + (rot == null ? "" : " facing (yaw / pitch / zw)")), true);
         return players.size();
     }
 
@@ -291,6 +311,89 @@ public final class Commands4 {
         ServerWorld4 w = world(c);
         Vec4 pos = Pos4Argument.getVec(c, "pos4");
         w.explodeAt(pos, power);
+        return 1;
+    }
+
+    /** Debug: counts fluid blocks by level within 24 blocks of the player (4D box). */
+    private static int fluids(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
+        ServerWorld4 w = world(c);
+        BlockPos4 o = ServerWorld4.state(p).pos.toBlockPos();
+        int[] water = new int[16], lava = new int[16];
+        int r = 24;
+        for (int dw = -r; dw <= r; dw++) for (int dz = -r; dz <= r; dz++) for (int dx = -r; dx <= r; dx++) for (int y = Math.max(0, o.y() - 12); y <= o.y() + 12; y++) {
+            BlockState s = w.getBlock(new BlockPos4(o.x() + dx, y, o.z() + dz, o.w() + dw));
+            if (s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock) {
+                int lvl = s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL);
+                if (s.getFluidState().is(net.minecraft.tags.FluidTags.LAVA)) lava[lvl]++; else water[lvl]++;
+            }
+        }
+        c.getSource().sendSuccess(() -> Component.literal("water by level " + Arrays.toString(water) + " lava " + Arrays.toString(lava)), false);
+        // describe one level-1 cell and its neighbourhood (debug aid)
+        outer:
+        for (int dw = -r; dw <= r; dw++) for (int dz = -r; dz <= r; dz++) for (int dx = -r; dx <= r; dx++) for (int y = Math.max(0, o.y() - 12); y <= o.y() + 12; y++) {
+            BlockPos4 bp = new BlockPos4(o.x() + dx, y, o.z() + dz, o.w() + dw);
+            BlockState s = w.getBlock(bp);
+            if (s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock && s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) == 1) {
+                StringBuilder sb = new StringBuilder("level-1 at " + bp + ":");
+                for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.VALUES) {
+                    BlockState n = w.getBlock(bp.relative(d));
+                    String v = n.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock ? "w" + n.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) : n.getBlock().getName().getString();
+                    sb.append(" ").append(d.name()).append("=").append(v);
+                }
+                String msg = sb.toString();
+                c.getSource().sendSuccess(() -> Component.literal(msg), false);
+                break outer;
+            }
+        }
+        return 1;
+    }
+
+    private static String describe(BlockState n) {
+        return n.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock
+                ? "w" + n.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) : n.getBlock().getName().getString();
+    }
+
+    /** Debug: a block and its eight 4D neighbours. */
+    private static int probe(CommandContext<CommandSourceStack> c) {
+        ServerWorld4 w = world(c);
+        BlockPos4 bp = Pos4Argument.getVec(c, "pos4").toBlockPos();
+        for (int dw = -1; dw <= 1; dw++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+            w.loadNow((bp.x() + dx) >> 4, (bp.z() + dz) >> 4, (bp.w() + dw) >> 4);
+        StringBuilder sb = new StringBuilder(bp + " = " + describe(w.getBlock(bp)) + ":");
+        for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.VALUES) sb.append(" ").append(d.name()).append("=").append(describe(w.getBlock(bp.relative(d))));
+        String msg = sb.toString();
+        c.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    /** Debug: follows the strongest horizontal water neighbour until a source/falling block. */
+    private static int trace(CommandContext<CommandSourceStack> c) {
+        ServerWorld4 w = world(c);
+        BlockPos4 bp = Pos4Argument.getVec(c, "pos4").toBlockPos();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 12; i++) {
+            for (int dw = -1; dw <= 1; dw++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+                w.loadNow((bp.x() + dx) >> 4, (bp.z() + dz) >> 4, (bp.w() + dw) >> 4);
+            BlockState s = w.getBlock(bp);
+            sb.append(bp).append("=").append(describe(s)).append(" above=").append(describe(w.getBlock(bp.above()))).append(" | ");
+            if (!(s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock)) break;
+            int lvl = s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL);
+            if (lvl == 0 || lvl >= 8) break;
+            BlockPos4 best = null;
+            int bestEff = 99;
+            for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.HORIZONTAL) {
+                BlockState n = w.getBlock(bp.relative(d));
+                if (n.getBlock() != s.getBlock()) continue;
+                int nl = n.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL);
+                int eff = nl >= 8 ? 0 : nl;
+                if (eff < bestEff) { bestEff = eff; best = bp.relative(d); }
+            }
+            if (best == null) break;
+            bp = best;
+        }
+        String msg = sb.toString();
+        c.getSource().sendSuccess(() -> Component.literal(msg), false);
         return 1;
     }
 

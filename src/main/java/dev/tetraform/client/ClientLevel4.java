@@ -15,9 +15,16 @@ public final class ClientLevel4 extends Level4 {
     /** Column key -> packed emitter list: {pos long, emission} pairs. */
     private final ConcurrentHashMap<Long, long[]> emitters = new ConcurrentHashMap<>();
     private volatile int maxY = 0;
+    /**
+     * Cached per-section face-exposure masks (bit i = face Direction4.VALUES[i] is visible), keyed by
+     * column key * 16 + section y. The mesher reads these instead of doing 8 neighbour lookups per voxel; most
+     * voxels are buried (mask 0) and get skipped at once. Entries are dropped when nearby blocks change.
+     */
+    private final ConcurrentHashMap<Long, byte[]> exposure = new ConcurrentHashMap<>();
 
     public void put(Column4 c) {
         columns.put(c.key(), c);
+        invalidateColumnAndNeighbours(c.cx, c.cz, c.cw);
         reindexEmitters(c);
         for (int sy = Column4.SECTIONS - 1; sy >= 0; sy--) {
             Section4 s = c.section(sy);
@@ -31,11 +38,13 @@ public final class ClientLevel4 extends Level4 {
     public void remove(long key) {
         columns.remove(key);
         emitters.remove(key);
+        invalidateColumnAndNeighbours(Column4.keyX(key), Column4.keyZ(key), Column4.keyW(key));
     }
 
     public void clear() {
         columns.clear();
         emitters.clear();
+        exposure.clear();
         maxY = 0;
     }
 
@@ -45,6 +54,11 @@ public final class ClientLevel4 extends Level4 {
 
     public BlockState setClient(BlockPos4 p, BlockState s) {
         BlockState old = setBlockRaw(p, s);
+        // the block itself and its eight neighbours may change exposure
+        invalidateSection(p.x(), p.y(), p.z(), p.w());
+        for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.VALUES) {
+            invalidateSection(p.x() + d.dx, p.y() + d.dy, p.z() + d.dz, p.w() + d.dw);
+        }
         if (old.getLightEmission() != s.getLightEmission()) {
             Column4 c = getColumnAt(p.x(), p.z(), p.w());
             if (c != null) reindexEmitters(c);
@@ -76,6 +90,33 @@ public final class ClientLevel4 extends Level4 {
         long[] a = new long[out.size()];
         for (int i = 0; i < a.length; i++) a[i] = out.get(i);
         emitters.put(c.key(), a);
+    }
+
+    private static long exposureKey(long columnKey, int sy) {
+        return columnKey * 16 + sy;
+    }
+
+    private void invalidateSection(int x, int y, int z, int w) {
+        if (y < 0 || y >= Column4.HEIGHT) return;
+        exposure.remove(exposureKey(Column4.key(x >> 4, z >> 4, w >> 4), y >> 4));
+    }
+
+    private void invalidateColumnAndNeighbours(int cx, int cz, int cw) {
+        int[][] offs = {{0, 0, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (int[] o : offs) {
+            long k = Column4.key(cx + o[0], cz + o[1], cw + o[2]);
+            for (int sy = 0; sy < Column4.SECTIONS; sy++) exposure.remove(exposureKey(k, sy));
+        }
+    }
+
+    /** Exposure masks for section {@code sy} of {@code col}, computed on first use (thread-safe, lock-free). */
+    public byte[] exposure(Column4 col, int sy) {
+        long key = exposureKey(col.key(), sy);
+        byte[] m = exposure.get(key);
+        if (m != null) return m;
+        m = Exposure4.compute(this, col, sy);
+        if (columns.get(col.key()) == col) exposure.put(key, m);
+        return m;
     }
 
     public long[] emitters(long columnKey) {

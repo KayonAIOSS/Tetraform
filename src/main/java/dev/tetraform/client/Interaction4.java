@@ -97,6 +97,11 @@ public final class Interaction4 {
                 (byte) (hit == null ? 0 : hit.face().ordinal()), entity));
     }
 
+    public static void pick() {
+        Level4.Hit hit = ClientState4.target;
+        if (hit != null) send(Net4.ACTION_PICK, hit.pos(), hit, -1);
+    }
+
     public static void onInteraction(InputEvent.InteractionKeyMappingTriggered event) {
         if (!ClientState4.active) return;
         Minecraft mc = Minecraft.getInstance();
@@ -119,6 +124,15 @@ public final class Interaction4 {
                 }
             }
         } else if (event.isUseItem()) {
+            if (ent >= 0) {
+                // right-click on a 4D creature (instead of placing a block behind it)
+                event.setCanceled(true);
+                if (useCooldown > 0) return;
+                useCooldown = 4;
+                event.setSwingHand(true);
+                send(Net4.ACTION_USE_ENTITY, BlockPos4.ZERO, null, ent);
+                return;
+            }
             if (hit == null) return; // let vanilla handle eating, bows, etc.
             event.setCanceled(true);
             if (useCooldown > 0) return;

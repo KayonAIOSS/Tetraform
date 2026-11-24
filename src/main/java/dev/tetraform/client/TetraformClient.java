@@ -47,6 +47,10 @@ public final class TetraformClient {
         }
         ClientNet4.drain();
         LocalPlayer player = mc.player;
+        // Middle click: vanilla only picks from its own (empty) 3D hit result, so handle it here first.
+        while (mc.options.keyPickItem.consumeClick()) {
+            if (player != null && ClientState4.target != null && ClientState4.targetEntity < 0) Interaction4.pick();
+        }
         if (player != null && ClientState4.hasPos) Interaction4.tick(player);
     }
 
@@ -55,7 +59,7 @@ public final class TetraformClient {
     /** Pressing a 4D control in a 3D world explains why nothing happens instead of failing silently. */
     private static void hintIn3D(Minecraft mc) {
         boolean pressed = false;
-        for (var k : new net.minecraft.client.KeyMapping[]{Keys4.ANA, Keys4.KATA, Keys4.ROTATE_ANA, Keys4.ROTATE_KATA, Keys4.RESET_SLICE}) {
+        for (var k : new net.minecraft.client.KeyMapping[]{Keys4.ANA, Keys4.KATA, Keys4.ROTATE_ANA, Keys4.ROTATE_KATA, Keys4.SNAP_270, Keys4.SNAP_0, Keys4.SNAP_90, Keys4.SNAP_180}) {
             while (k.consumeClick()) pressed = true;
         }
         if (!pressed || mc.player == null || mc.level == null) return;

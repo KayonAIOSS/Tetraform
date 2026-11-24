@@ -110,6 +110,26 @@ public final class SpriteCache {
         return new Faces(layers);
     }
 
+    private static final java.util.concurrent.ConcurrentHashMap<Long, Integer> TINTS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** ARGB tint for a model tint index (default biome colours; there are no 3D biomes in a 4D world). */
+    public static int tint(BlockState state, int tintIndex) {
+        long key = ((long) Block.getId(state) << 8) | (tintIndex & 0xFF);
+        Integer c = TINTS.get(key);
+        if (c != null) return c;
+        int v = -1;
+        BlockTintSource src = Minecraft.getInstance().getBlockColors().getTintSource(state, tintIndex);
+        if (src != null) {
+            try {
+                v = 0xFF000000 | src.color(state);
+            } catch (Throwable t) {
+                v = 0xFF7FB238;
+            }
+        }
+        TINTS.put(key, v);
+        return v;
+    }
+
     private static void addQuad(List<Layer> out, BakedQuad q, BlockState state, int emission) {
         if (out.size() >= 3) return;
         BakedQuad.MaterialInfo mi = q.materialInfo();

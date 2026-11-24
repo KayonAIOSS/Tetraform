@@ -74,8 +74,13 @@ public final class EntityRenderer4 {
             int sky = p.y() + 1 >= ClientState4.LEVEL.heightAt((int) Math.floor(p.x()), (int) Math.floor(p.z()), (int) Math.floor(p.w())) ? 15 : 5;
             int light = LightCoordsUtil.pack(type == Entity4Type.STALKER ? 7 : 0, sky);
             double dy = p.y() - cam.y;
+            double scale = type != Entity4Type.ITEM && (now.extra() & 1) != 0 ? 0.55 : 1.0;
             for (Entity4Type.Part part : type.parts(itemTex)) {
                 double[] b = part.box();
+                if (scale != 1.0) {
+                    b = b.clone();
+                    for (int i = 0; i < 8; i++) b[i] *= scale;
+                }
                 SpriteCache.Faces faces = SpriteCache.get(part.texture());
                 SLICER.slice(b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], 0xFF, 0, 0, 0, 0,
                         (dir, cnt, pos, uv, nx, ny, nz) -> {
@@ -108,10 +113,37 @@ public final class EntityRenderer4 {
         BlockPos4 bp = hit.pos();
         BlockState s = ClientState4.LEVEL.getBlock(bp);
         if (s.isAir()) return;
+        PoseStack ps = event.getPoseStack();
+
+        // Vanilla-style outline: the block's real outline shape, placed in its cross-section of the slice.
+        double zc = m.get(1, 1), zs = m.get(2, 1);
+        boolean zwFrame = Math.abs(m.get(0, 0) - 1) < 1.0E-9 && Math.abs(m.normalX()) < 1.0E-9;
+        double[] cut = zwFrame ? SliceMesher.cut(zc, zs, mp.depth(), bp.z(), bp.w()) : null;
+        if (cut != null) {
+            double len = cut[1] - cut[0];
+            boolean flip = zc < 0;
+            net.minecraft.world.phys.shapes.VoxelShape shape = s.getShape(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, net.minecraft.core.BlockPos.ZERO);
+            if (shape.isEmpty()) shape = net.minecraft.world.phys.shapes.Shapes.block();
+            net.minecraft.world.phys.shapes.VoxelShape mapped = net.minecraft.world.phys.shapes.Shapes.empty();
+            for (net.minecraft.world.phys.AABB a : shape.toAabbs()) {
+                double x0 = flip ? 1 - a.maxX : a.minX, x1 = flip ? 1 - a.minX : a.maxX;
+                double z0 = flip ? 1 - a.maxZ : a.minZ, z1 = flip ? 1 - a.minZ : a.maxZ;
+                mapped = net.minecraft.world.phys.shapes.Shapes.or(mapped,
+                        net.minecraft.world.phys.shapes.Shapes.box(x0, a.minY, z0 * len, x1, a.maxY, z1 * len));
+            }
+            double rx = bp.x() + mp.offX(), rz = cut[0] + mp.offZ();
+            ps.pushPose();
+            ps.translate(rx - cam.x, bp.y() - cam.y, rz - cam.z);
+            float width = Minecraft.getInstance().gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth;
+            event.getSubmitNodeCollector().submitShapeOutline(ps, mapped, RenderTypes.linesTranslucent(), 0x66000000,
+                    width > 0 ? width : 2.5f, false);
+            ps.popPose();
+        }
+
+        // breaking cracks on the actual sliced faces
+        if (ClientState4.breaking == null || !ClientState4.breaking.equals(bp) || ClientState4.breakProgress <= 0) return;
         double[] b = BlockShapes4.render(s);
-        double e = 0.004;
-        TextureAtlasSprite white = SpriteCache.get(Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.WHITE).defaultBlockState()).layers()[0][0].sprite();
-        List<Poly> polys = new ArrayList<>();
+        double e = 0.002;
         List<Poly> crack = new ArrayList<>();
         SLICER.setPlane(m, depth, cam.x - mp.offX(), cam.z - mp.offZ());
         double dy = -cam.y;
@@ -122,18 +154,11 @@ public final class EntityRenderer4 {
                     for (int i = 0; i < cnt; i++) pp[i * 3 + 1] += (float) dy;
                     float[] uu = uv.clone();
                     for (int i = 0; i < cnt * 2; i++) uu[i] = Math.max(0, Math.min(1, uu[i]));
-                    polys.add(new Poly(white, cnt, pp, uu, nx, ny, nz, 0x40FFFFFF, LightCoordsUtil.pack(15, 15)));
                     crack.add(new Poly(null, cnt, pp, uu, nx, ny, nz, 0xFFFFFFFF, LightCoordsUtil.pack(15, 15)));
                 });
-        if (polys.isEmpty()) return;
-        PoseStack ps = event.getPoseStack();
-        event.getSubmitNodeCollector().submitCustomGeometry(ps, RenderTypes.entityTranslucent(TextureAtlas.LOCATION_BLOCKS),
-                (pose, buf) -> { for (Poly p : polys) emit(pose, buf, p); });
-        if (ClientState4.breaking != null && ClientState4.breaking.equals(bp) && ClientState4.breakProgress > 0) {
-            int stage = Math.min(9, (int) (ClientState4.breakProgress * 10));
-            RenderType rt = RenderTypes.crumbling(Identifier.withDefaultNamespace("textures/block/destroy_stage_" + stage + ".png"));
-            event.getSubmitNodeCollector().submitCustomGeometry(ps, rt, (pose, buf) -> { for (Poly p : crack) emit(pose, buf, p); });
-        }
+        int stage = Math.min(9, (int) (ClientState4.breakProgress * 10));
+        RenderType rt = RenderTypes.crumbling(Identifier.withDefaultNamespace("textures/block/destroy_stage_" + stage + ".png"));
+        event.getSubmitNodeCollector().submitCustomGeometry(ps, rt, (pose, buf) -> { for (Poly p : crack) emit(pose, buf, p); });
     }
 
     private static void emit(PoseStack.Pose pose, VertexConsumer buf, Poly p) {

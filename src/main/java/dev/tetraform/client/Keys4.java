@@ -19,7 +19,11 @@ public final class Keys4 {
     public static final KeyMapping ROTATE_ANA = key("smooth_turn_ana", InputConstants.Type.MOUSE, InputConstants.MOUSE_BUTTON_5);
     /** Smooth rotation toward -W while held (default: mouse "back" side button). */
     public static final KeyMapping ROTATE_KATA = key("smooth_turn_kata", InputConstants.Type.MOUSE, InputConstants.MOUSE_BUTTON_4);
-    public static final KeyMapping RESET_SLICE = key("reset_w_rotation", InputConstants.Type.KEYBOARD, InputConstants.KEY_N);
+    /** Snap the zw rotation to a quarter turn: "left" 270, "forward" 0, "right" 90, "backward" 180. */
+    public static final KeyMapping SNAP_270 = key("snap_zw_270", InputConstants.Type.KEYBOARD, InputConstants.KEY_Z);
+    public static final KeyMapping SNAP_0 = key("snap_zw_0", InputConstants.Type.KEYBOARD, InputConstants.KEY_X);
+    public static final KeyMapping SNAP_90 = key("snap_zw_90", InputConstants.Type.KEYBOARD, InputConstants.KEY_C);
+    public static final KeyMapping SNAP_180 = key("snap_zw_180", InputConstants.Type.KEYBOARD, InputConstants.KEY_B);
     /** Strafe along the hidden axis (the slice normal). */
     public static final KeyMapping ANA = key("strafe_ana", InputConstants.Type.KEYBOARD, InputConstants.KEY_R);
     public static final KeyMapping KATA = key("strafe_kata", InputConstants.Type.KEYBOARD, InputConstants.KEY_V);
@@ -35,7 +39,10 @@ public final class Keys4 {
         e.register(ROTATE_MODIFIER);
         e.register(ROTATE_ANA);
         e.register(ROTATE_KATA);
-        e.register(RESET_SLICE);
+        e.register(SNAP_270);
+        e.register(SNAP_0);
+        e.register(SNAP_90);
+        e.register(SNAP_180);
         e.register(ANA);
         e.register(KATA);
     }

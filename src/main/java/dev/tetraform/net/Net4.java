@@ -142,7 +142,7 @@ public final class Net4 {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public static final byte ACTION_BREAK = 0, ACTION_PLACE = 1, ACTION_USE = 2, ACTION_ATTACK = 3, ACTION_PICK = 4;
+    public static final byte ACTION_BREAK = 0, ACTION_PLACE = 1, ACTION_USE = 2, ACTION_ATTACK = 3, ACTION_PICK = 4, ACTION_USE_ENTITY = 5;
 
     public record Action4C2S(byte action, int x, int y, int z, int w, byte face, int entityId) implements CustomPacketPayload {
         public static final Type<Action4C2S> TYPE = typeOf("action4");

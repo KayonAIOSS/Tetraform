@@ -213,6 +213,14 @@ public final class ServerWorld4 {
 
     /** Moves a player to a 4D location, bringing them into the tesseract dimension first if needed. */
     public void teleport(ServerPlayer p, Vec4 target, SliceFrame frame) {
+        teleport(p, target, frame, p.getYRot(), p.getXRot());
+    }
+
+    /** Teleport with an explicit view: vanilla yaw and pitch plus (via {@code frame}) the zw rotation. */
+    public void teleport(ServerPlayer p, Vec4 target, SliceFrame frame, float yaw, float pitch) {
+        p.setYRot(yaw);
+        p.setXRot(pitch);
+        p.setYHeadRot(yaw);
         PlayerState4 st = state(p);
         st.pos = target;
         st.initialized = true;
@@ -221,7 +229,7 @@ public final class ServerWorld4 {
         loadNow((int) Math.floor(target.x()) >> 4, (int) Math.floor(target.z()) >> 4, (int) Math.floor(target.w()) >> 4);
         if (p.level() != level) {
             double[] rp = PlayerState4.renderPosition(st.frame, st.pos);
-            p.teleportTo(level, rp[0], rp[1], rp[2], Set.of(), p.getYRot(), p.getXRot(), true);
+            p.teleportTo(level, rp[0], rp[1], rp[2], Set.of(), yaw, pitch, true);
             // onPlayerEnter is triggered by the dimension change event
         } else {
             sendTeleport(p, false);
@@ -278,8 +286,27 @@ public final class ServerWorld4 {
         CompletableFuture<Column4> f = loading.remove(key);
         c = f != null ? f.join() : loadOrGenerate(cx, cz, cw);
         level4.columns.put(key, c);
+        resumeFluids(c);
         lastNeeded.put(key, tick);
         return c;
+    }
+
+    private static boolean flowing(BlockState s) {
+        return s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock
+                && s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) != 0;
+    }
+
+    /** Scheduled ticks are not saved, so flowing fluid in a freshly loaded column is re-scheduled to settle. */
+    private void resumeFluids(Column4 c) {
+        for (int sy = 0; sy < Column4.SECTIONS; sy++) {
+            Section4 sec = c.section(sy);
+            if (sec == null || sec.isEmpty() || !sec.paletteAny(ServerWorld4::flowing)) continue;
+            for (int i = 0; i < Section4.VOLUME; i++) {
+                if (!flowing(sec.get(i))) continue;
+                int lx = i & 15, lz = (i >> 4) & 15, ly = (i >> 8) & 15, lw = (i >> 12) & 15;
+                schedule(new BlockPos4((c.cx << 4) + lx, sy * 16 + ly, (c.cz << 4) + lz, (c.cw << 4) + lw), 5 + random.nextInt(10));
+            }
+        }
     }
 
     private void request(long key) {
@@ -298,7 +325,7 @@ public final class ServerWorld4 {
             it.remove();
             try {
                 Column4 c = e.getValue().join();
-                level4.columns.putIfAbsent(e.getKey(), c);
+                if (level4.columns.putIfAbsent(e.getKey(), c) == null) resumeFluids(c);
             } catch (Exception ex) {
                 Tetraform.LOGGER.error("4D column generation failed", ex);
             }
@@ -403,8 +430,11 @@ public final class ServerWorld4 {
     }
 
     private void runScheduled() {
+        // At most 4096 ticks and ~15 ms per server tick; anything left over runs next tick, so a large fluid
+        // or redstone event slows down instead of stalling the server.
         int budget = 4096;
-        while (!scheduled.isEmpty() && scheduled.peek().at <= tick && budget-- > 0) {
+        long deadline = System.nanoTime() + 15_000_000L;
+        while (!scheduled.isEmpty() && scheduled.peek().at <= tick && budget-- > 0 && ((budget & 63) != 0 || System.nanoTime() < deadline)) {
             Scheduled s = scheduled.poll();
             scheduledKeys.remove(s.pos);
             BlockPos4 p = BlockPos4.of(s.pos);
@@ -494,7 +524,7 @@ public final class ServerWorld4 {
             BlockState ground = level4.getBlock(bx, y - 1, bz, bw);
             if (y <= 1 || !ground.getFluidState().isEmpty() || !level4.getBlock(bx, y, bz, bw).isAir()) continue;
             boolean night = level.isDarkOutside();
-            Entity4Type type = (night && random.nextFloat() < 0.7f) || random.nextFloat() < 0.12f ? Entity4Type.STALKER : Entity4Type.HYPERHOG;
+            Entity4Type type = night && random.nextFloat() < 0.7f ? Entity4Type.STALKER : Entity4Type.HYPERHOG;
             Entity4 e = new Entity4(type, new Vec4(bx + 0.5, y, bz + 0.5, bw + 0.5));
             e.frame.turnForwardTowards(random.nextDouble() - 0.5, random.nextDouble() - 0.5, random.nextDouble() - 0.5, Math.PI);
             addEntity(e);
@@ -508,7 +538,7 @@ public final class ServerWorld4 {
             List<Net4.EntityView> views = new ArrayList<>();
             for (Entity4 e : entities.values()) {
                 if (e.pos.distanceSqr(pp) > 80 * 80) continue;
-                int extra = e.type == Entity4Type.ITEM ? BuiltInRegistries.ITEM.getId(e.stack.getItem()) : 0;
+                int extra = e.type == Entity4Type.ITEM ? BuiltInRegistries.ITEM.getId(e.stack.getItem()) : (e.baby ? 1 : 0) | (e.loveTicks > 0 ? 2 : 0);
                 views.add(view(e.id, e.type, e.pos, e.frame, extra, e.hurtTime));
             }
             for (ServerPlayer o : players) {

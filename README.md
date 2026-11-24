@@ -20,7 +20,9 @@ worlds created before the mod was installed.
 | **Redstone** | Dust networks connect along all 6 horizontal directions (x, z **and w**) plus up and down steps. Levers, buttons, redstone blocks, torches, lamps and conductive blocks all work. |
 | **Fluids / gravity / TNT** | Water and lava spread in 6 horizontal directions, form infinite sources and mix into obsidian and cobblestone. Sand and gravel fall. TNT blows up a 4D hyperball. |
 | **Mobs** | Hyperhogs (passive, with 8 legs, one per (x′, z′, w′) corner) and Stalkers (hostile). Their AI wanders, chases and flees in random 4D directions. Their orientation is a full rotation of the (x, z, w) space, and they turn smoothly through W toward where they walk. |
-| **Commands** | 4 numbers per coordinate: `/setblock x y z w <block>`, `/fill x1 y1 z1 w1 x2 y2 z2 w2 <block> [replace\|keep\|hollow\|outline]` (**8** numbers), `/clone`, `/tp x y z w`, `/tp <players> x y z w`, `/summon tetraform:hyperhog x y z w`. `~` relative coordinates work. The 3-coordinate vanilla forms still work. |
+| **Commands** | 4 numbers per coordinate: `/setblock x y z w <block>`, `/fill x1 y1 z1 w1 x2 y2 z2 w2 <block> [replace\|keep\|hollow\|outline]` (**8** numbers), `/clone`, `/tp x y z w [yaw pitch zw]`, `/tp <players> x y z w [yaw pitch zw]`, `/summon tetraform:hyperhog x y z w`. `~` relative coordinates work. The 3-coordinate vanilla forms still work. |
+| **Movement** | Vanilla's physics model ported to 4D: the same acceleration, friction, gravity order (a jump clears a full block), sprint-jump and sneak. Input is normalised across all three horizontal axes, so diagonals and W-strafing are never faster. |
+| **Fluids** | Rendered like vanilla, with sloped, smoothly connected surfaces (each corner averages its 4D neighbours). Flow follows vanilla's "toward the nearest drop" rule and drains when the source is removed. Caves are generated so they never open into lakes. |
 
 ## The 4D camera
 
@@ -58,6 +60,14 @@ normal (W faces included), 4D sky light from the 3D heightmap, and block light f
 Mobs, items and other players are sliced every frame, exactly in their own rotated frames. They are submitted
 through vanilla entity render types.
 
+### Blocks with real models
+
+Full cubes are sliced exactly. Every other block (grass, flowers, torches, slabs, stairs, fences…) is drawn
+with its **actual vanilla 3D model**, placed in the block's cross-section of your slice. Since every zw slice of a block is a box,
+the model fits exactly: at 0°/90°/180°/270° blocks look exactly like vanilla, and in between they stretch in
+depth along the rotated axis. The selection outline is vanilla's own outline renderer drawing the block's real
+shape the same way.
+
 ### Sodium / Iris compatibility
 
 * There are no Sodium or Iris mixins. Terrain goes through the section-geometry event, which Sodium supports,
@@ -81,6 +91,13 @@ through vanilla entity render types.
   section, never O(16⁴). Faces are culled across all 8 directions. Slicing allocates nothing per face.
 * Remeshing happens only when the hyperplane changes. Axis-aligned slices change only when you cross an
   integer W. Block updates remesh only the sections they project into.
+* **Near-first remeshing:** while you rotate or move along W, only sections within 3 sections of you
+  rebuild each step. Everything else rebuilds once you stop for 0.2 s (and at least once a second).
+  Close terrain stays correct at full speed, and distant terrain catches up a moment later.
+* **Face-exposure cache:** each section caches which of its voxels' eight faces are visible. The mesher skips
+  buried voxels without any neighbour lookups, and the cache only changes when nearby blocks do.
+* The server caps scheduled block ticks per tick (count and time), so big water or redstone events slow
+  down instead of stalling the server.
 
 ## Controls
 
@@ -90,9 +107,14 @@ mouse button. They work out of the box:
 | Default | Action |
 |---|---|
 | Hold **Left Alt** + **scroll wheel** | Rotate into W, 5° per notch. While the modifier is held, scrolling does **not** change the hotbar slot. |
-| **Mouse button 5** / **Mouse button 4** (side buttons) | Smoothly rotate toward +W / −W while held (60°/s). These are optional; if your mouse has no side buttons, rebind them, e.g. to `G` / `B`. |
-| `N` | Reset the W rotation to 0° (ordinary XYZ view) |
-| `R` / `V` | Strafe along the hidden axis (ana / kata) |
+| **Mouse button 5** / **Mouse button 4** (side buttons) | Smoothly rotate toward +W / −W while held (60°/s). These are optional; if your mouse has no side buttons, rebind them, e.g. to `G` / `H`. |
+| `Z` / `X` / `C` / `B` | Snap the W rotation to 270° ("left"), 0° ("forward"), 90° ("right"), 180° ("backward") |
+| `R` / `V` | Strafe ana / kata along the hidden axis. Like A/D, this follows your view: from the spawn orientation it is +W / −W, and it turns with the zw rotation. |
+| Middle click | Pick block (vanilla rules: hotbar, then inventory, then creative supply) |
+| Right click a mob | Hyperhogs eat carrots, potatoes and beetroot: this heals them, and two fed hogs make a (smaller) baby |
+
+Vanilla also binds `X` and `C` (creative toolbar load/save activators), and Iris binds `R` (reload shaders),
+so the Controls screen flags those conflicts; rebind whichever you prefer.
 
 **F3 is four-dimensional.** In a 4D world, the vanilla debug entries show 4D data with their usual layout:
 `XYZW`, `Block x y z w`, `Chunk cx cy cz cw`, `Facing: ana (Towards positive W) (yaw / pitch / zw)`, a `Slice`
@@ -102,8 +124,10 @@ line (zw angle, hyperplane normal, depth), 4D section-relative coordinates, the 
 
 Pressing a 4D control in a 3D world shows a hint explaining why nothing happens.
 
-Commands: `/tetra enter`, `/tetra leave`, `/tetra where`, `/tetra rotate <deg>` (adds to zw), `/tetra reset`,
-`/tetra explode x y z w [power]`, `/tetra killmobs`.
+Commands: `/tp x y z w [yaw pitch zw]` (each rotation accepts `~`), `/tetra enter`, `/tetra leave`, `/tetra where`,
+`/tetra rotate <deg>` (adds to zw), `/tetra reset`, `/tetra explode x y z w [power]`, `/tetra killmobs`. These are
+debug helpers: `/tetra fluids` (fluid counts nearby), `/tetra probe x y z w` (a block and its 8 neighbours) and
+`/tetra trace x y z w` (follows a flow back to whatever feeds it).
 
 ## Building
 
@@ -132,6 +156,13 @@ To build locally:
   is quick, but during fast turns, distant sections can lag a moment behind nearby ones.
 * Upgrading from 0.1.0: the key-binding ids changed so the new defaults apply; earlier custom bindings for
   Tetraform keys need to be set again.
+* Worlds created before this version can contain caves that open into lakes, and those can still flood if
+  disturbed. New worlds don't have such caves.
+* Iris: terrain is ordinary chunk-section geometry, which the shadow pass renders, so terrain shadows should
+  work. Mobs, items and other players are drawn per frame through a separate path that the shadow pass doesn't
+  replay, so they cast no shadows. This could not be verified in-game yet: the only Iris build for 26.3 (1.11.7)
+  is rejected by Sodium 0.9.3 (it requires Iris ≥ 1.12.1). With Sodium 0.9.3-beta.3 it loads, but crashes
+  inside Iris itself (`CenterDepthSampler`) as soon as a shader pack is enabled.
 
 ## Screenshots
 
@@ -140,6 +171,10 @@ These were rendered in-game with software OpenGL and Sodium 0.9.3, in a fresh *D
 | zw 0° (x-y-z slice) | zw 45° (boxes stretched in depth) | zw 90° (x-y-w slice, cubes again) |
 |---|---|---|
 | ![](docs/f3-4d.png) | ![](docs/zw-45.png) | ![](docs/zw-90.png) |
+
+| Real block models + vanilla outline | Water flowing downhill | Two players (multiplayer) |
+|---|---|---|
+| ![](docs/outline-models.png) | ![](docs/water.png) | ![](docs/multiplayer.png) |
 
 | Ordinary slice (0.1.0) | A Stalker (sliced 4D body) |
 |---|---|

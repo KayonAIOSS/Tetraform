@@ -61,6 +61,9 @@ public final class Tetraform {
     public static final DeferredHolder<ArgumentTypeInfo<?, ?>, SingletonArgumentInfo<Pos4Argument>> POS4_ARG = ARGUMENTS.register("pos4",
             () -> ArgumentTypeInfos.registerByClass(Pos4Argument.class, SingletonArgumentInfo.contextFree(Pos4Argument::pos4)));
 
+    public static final DeferredHolder<ArgumentTypeInfo<?, ?>, SingletonArgumentInfo<dev.tetraform.command.Rot3Argument>> ROT3_ARG = ARGUMENTS.register("rot3",
+            () -> ArgumentTypeInfos.registerByClass(dev.tetraform.command.Rot3Argument.class, SingletonArgumentInfo.contextFree(dev.tetraform.command.Rot3Argument::rot3)));
+
     public Tetraform(IEventBus modBus, ModContainer container) {
         BLOCKS.register(modBus);
         ATTACHMENTS.register(modBus);

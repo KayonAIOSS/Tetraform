@@ -100,6 +100,7 @@ public final class TerrainGenerator4 {
             boolean underwater = h < SEA_LEVEL;
             boolean snowy = h > 118;
             int top = Math.max(h, SEA_LEVEL);
+            int minNH = minNeighbourHeight(heights, bx, bz, bw, lx, lz, lw);
             for (int y = 0; y <= top; y++) {
                 Section4 sec = col.section(y >> 4);
                 if (sec != null && sec.isUniform() && !sec.isEmpty() && y < solidTop) {
@@ -114,7 +115,9 @@ public final class TerrainGenerator4 {
                 else if (y == h) s = underwater ? (h < SEA_LEVEL - 6 ? GRAVEL : SAND) : beach ? SAND : snowy ? SNOW : GRASS;
                 else s = WATER; // h < y <= SEA_LEVEL
                 // 4D caves
-                if (y >= 12 && y < h - 1 && s != WATER) {
+                // Caves stay at least 2 blocks below this column's surface AND every face-neighbour column's
+                // surface, so they can never open into a lake or ocean (vanilla uses aquifers for this).
+                if (y >= 12 && y < h - 1 && s != WATER && y < minNH - 1) {
                     if (caveGrid == null) caveGrid = buildCaveGrid(bx, bz, bw, maxH);
                     if (caveValue(caveGrid, lx, y, lz, lw) < 0.085) s = Level4.AIR;
                 }
@@ -135,6 +138,20 @@ public final class TerrainGenerator4 {
         col.recomputeHeightmap();
         col.setDirty(true);
         return col;
+    }
+
+    /** Lowest surface among a column and its six horizontal face neighbours (x, z and w). */
+    private int minNeighbourHeight(int[] heights, int bx, int bz, int bw, int lx, int lz, int lw) {
+        int m = heights[(lw << 8) | (lz << 4) | lx];
+        int[][] d = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (int[] o : d) {
+            int nx = lx + o[0], nz = lz + o[1], nw = lw + o[2];
+            int h;
+            if (nx >= 0 && nx < 16 && nz >= 0 && nz < 16 && nw >= 0 && nw < 16) h = heights[(nw << 8) | (nz << 4) | nx];
+            else h = Math.max(4, Math.min(Column4.HEIGHT - 24, surfaceHeight(bx + nx, bz + nz, bw + nw)));
+            if (h < m) m = h;
+        }
+        return m;
     }
 
     private static final int CG = 4; // cave grid spacing

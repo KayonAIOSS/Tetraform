@@ -179,7 +179,11 @@ public final class Behaviors4 {
                     newLevel = best;
                 }
             }
-            if (newLevel > maxLevel && newLevel != 8) {
+            // Level 8 means "falling" (full strength) and may only come from fluid directly above. A horizontal
+            // neighbour at level 7 gives 7 + 1 = 8, which must mean "too weak", not "falling": treating it as
+            // falling made the thinnest edge of a flow resurrect itself, so water never drained.
+            boolean falling = sameFluid(s, above);
+            if (!falling && newLevel > maxLevel) {
                 world.setBlock(p, Level4.AIR, true);
                 return;
             }
@@ -200,7 +204,7 @@ public final class Behaviors4 {
         int eff = lvl >= 8 ? 0 : lvl;
         int next = eff + drop;
         if (next > maxLevel) return;
-        for (Direction4 d : Direction4.HORIZONTAL) {
+        for (Direction4 d : spreadDirections(p, s, lava ? 2 : 4)) {
             BlockPos4 np = p.relative(d);
             BlockState n = get(np);
             if (replaceableByFluid(n)) {
@@ -209,6 +213,61 @@ public final class Behaviors4 {
                 world.setBlock(np, s.setValue(LiquidBlock.LEVEL, next), true);
             }
         }
+    }
+
+    private boolean canFlowInto(BlockState s, BlockState n) {
+        return replaceableByFluid(n) || (sameFluid(s, n) && level(n) != 0);
+    }
+
+    /**
+     * Vanilla's flow rule in 4D: of the six horizontal directions, fluid only spreads toward the closest drop
+     * (a place it can fall from) within {@code maxDepth} blocks. With no drop in reach, it spreads every way.
+     * Without this rule, water floods outward evenly instead of running downhill.
+     */
+    private java.util.List<Direction4> spreadDirections(BlockPos4 p, BlockState s, int maxDepth) {
+        // Breadth-first search over the horizontal cells the fluid could flow through (at most ~130 cells for
+        // depth 4), tagging each cell with the starting direction(s) that reach it first.
+        Direction4[] dirs = Direction4.HORIZONTAL;
+        java.util.Map<Long, Integer> tags = new java.util.HashMap<>();
+        java.util.ArrayDeque<BlockPos4> frontier = new java.util.ArrayDeque<>();
+        int found = 0;
+        for (int i = 0; i < dirs.length; i++) {
+            BlockPos4 np = p.relative(dirs[i]);
+            if (!canFlowInto(s, get(np))) continue;
+            if (replaceableByFluid(get(np.below()))) found |= 1 << i;
+            tags.merge(np.asLong(), 1 << i, (x, y) -> x | y);
+            frontier.add(np);
+        }
+        tags.put(p.asLong(), 0);
+        for (int depth = 1; found == 0 && depth <= maxDepth && !frontier.isEmpty(); depth++) {
+            java.util.ArrayDeque<BlockPos4> next = new java.util.ArrayDeque<>();
+            java.util.Map<Long, Integer> nextTags = new java.util.HashMap<>();
+            for (BlockPos4 c : frontier) {
+                int tag = tags.get(c.asLong());
+                for (Direction4 d : dirs) {
+                    BlockPos4 q = c.relative(d);
+                    long k = q.asLong();
+                    if (tags.containsKey(k)) continue;
+                    if (!canFlowInto(s, get(q))) continue;
+                    Integer prev = nextTags.get(k);
+                    if (prev == null) next.add(q);
+                    nextTags.put(k, prev == null ? tag : prev | tag);
+                }
+            }
+            for (BlockPos4 q : next) {
+                int tag = nextTags.get(q.asLong());
+                tags.put(q.asLong(), tag);
+                if (replaceableByFluid(get(q.below()))) found |= tag;
+            }
+            frontier = next;
+        }
+        java.util.List<Direction4> out = new java.util.ArrayList<>(6);
+        for (int i = 0; i < dirs.length; i++) {
+            boolean open = tags.containsKey(p.relative(dirs[i]).asLong()) && canFlowInto(s, get(p.relative(dirs[i])));
+            if (!open) continue;
+            if (found == 0 || (found & (1 << i)) != 0) out.add(dirs[i]);
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ redstone
@@ -435,13 +494,43 @@ public final class Behaviors4 {
                 place(p, st, pos, face);
             }
             case Net4.ACTION_PICK -> {
-                BlockState s = get(pos);
-                if (p.isCreative() && !s.isAir()) {
-                    ItemStack stack = new ItemStack(s.getBlock().asItem());
-                    if (!stack.isEmpty()) p.getInventory().setItem(p.getInventory().getSelectedSlot(), stack);
-                }
+                if (eye(st).distance(pos.center()) > REACH + 1) return;
+                pick(p, get(pos));
             }
+            case Net4.ACTION_USE_ENTITY -> useEntity(p, st, a.entityId());
             default -> {}
+        }
+    }
+
+    /** Middle click: the same rules as vanilla's pick-block (hotbar, then inventory, then creative supply). */
+    private void pick(ServerPlayer p, BlockState s) {
+        if (s.isAir()) return;
+        net.minecraft.world.item.Item item = s.getBlock() instanceof LiquidBlock
+                ? (isLava(s) ? Items.LAVA_BUCKET : Items.WATER_BUCKET) : s.getBlock().asItem();
+        ItemStack stack = new ItemStack(item);
+        if (stack.isEmpty()) return;
+        var inv = p.getInventory();
+        int slot = inv.findSlotMatchingItem(stack);
+        if (slot != -1) {
+            if (net.minecraft.world.entity.player.Inventory.isHotbarSlot(slot)) inv.setSelectedSlot(slot);
+            else inv.pickSlot(slot);
+        } else if (p.hasInfiniteMaterials()) {
+            inv.addAndPickItem(stack);
+        }
+        p.connection.send(new net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket(inv.getSelectedSlot()));
+        p.inventoryMenu.broadcastChanges();
+    }
+
+    /** Right-click on a 4D mob: feed hyperhogs (carrots, potatoes, beetroot) to heal and breed them. */
+    private void useEntity(ServerPlayer p, PlayerState4 st, int id) {
+        Entity4 e = world.entity(id);
+        if (e == null || e.pos.distance(st.pos) > 6) return;
+        ItemStack held = p.getMainHandItem();
+        if (e.type == Entity4Type.HYPERHOG && (held.is(Items.CARROT) || held.is(Items.POTATO) || held.is(Items.BEETROOT))) {
+            if (e.feed(world)) {
+                if (!p.hasInfiniteMaterials()) held.shrink(1);
+                world.serverLevel().playSound(null, p.blockPosition(), SoundEvents.GENERIC_EAT.value(), SoundSource.NEUTRAL, 1f, 1f);
+            }
         }
     }
 

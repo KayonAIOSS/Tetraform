@@ -38,6 +38,12 @@ public class Entity4 {
     private int panicTicks;
     private Vec4 fleeFrom;
     private boolean wantJump;
+    /** Ticks of "love mode" after being fed; two hyperhogs in love nearby make a baby. */
+    public int loveTicks;
+    public int breedCooldown;
+    /** Babies are smaller (rendered at half scale) and grow up after 20 minutes. */
+    public boolean baby;
+    private boolean seekingPartner;
 
     public Entity4(Entity4Type type, Vec4 pos) {
         this.id = nextId++;
@@ -55,6 +61,10 @@ public class Entity4 {
         if (hurtTime > 0) hurtTime--;
         if (attackCooldown > 0) attackCooldown--;
         if (pickupDelay > 0) pickupDelay--;
+        if (loveTicks > 0) loveTicks--;
+        if (breedCooldown > 0) breedCooldown--;
+        if (baby && age > 24000) baby = false;
+        seekingPartner = loveTicks > 0 && type == Entity4Type.HYPERHOG && tryBreed(world);
         Level4 level = world.level();
         if (!level.isLoaded((int) Math.floor(pos.x()), (int) Math.floor(pos.z()), (int) Math.floor(pos.w()))) return;
 
@@ -83,12 +93,14 @@ public class Entity4 {
             vy = inFluid ? 0.12 : 0.42;
         }
         wantJump = false;
-        vy = (vy - gravity) * (inFluid ? 0.8 : 0.98);
         Vec4 delta = new Vec4(hx, vy, hz, hw);
         Physics4.Result r = Physics4.move(level, box(), delta, type == Entity4Type.ITEM ? 0 : 0.6, onGround);
         pos = pos.add(r.delta());
         onGround = r.onGround();
-        vel = new Vec4(r.delta().x() == hx ? hx : 0, r.verticalCollision() ? 0 : vy, r.delta().z() == hz ? hz : 0, r.delta().w() == hw ? hw : 0);
+        if (r.verticalCollision()) vy = 0;
+        // gravity after moving, like vanilla, so a 0.42 jump clears a full block
+        vy = (vy - gravity) * (inFluid ? 0.8 : 0.98);
+        vel = new Vec4(r.delta().x() == hx ? hx : 0, vy, r.delta().z() == hz ? hz : 0, r.delta().w() == hw ? hw : 0);
         if (r.horizontalCollision() && moveSpeed > 0) wantJump = true;
 
         // Turn smoothly toward the direction of travel in all three horizontal axes (x, z AND w).
@@ -113,6 +125,7 @@ public class Entity4 {
     }
 
     private void ai(ServerWorld4 world) {
+        if (seekingPartner) return;
         RandomSource rnd = world.random();
         ServerPlayer target = type.hostile ? world.nearestPlayer(pos, 20) : null;
         if (target != null && (target.isCreative() || target.isSpectator())) target = null;
@@ -166,6 +179,42 @@ public class Entity4 {
         moveZ = z / l;
         moveW = w / l;
         moveSpeed = speed;
+    }
+
+    /** Feeding: heals, and an adult not on cooldown enters love mode. Returns true if the food was used. */
+    public boolean feed(ServerWorld4 world) {
+        boolean used = false;
+        if (health < type.maxHealth) {
+            health = Math.min(type.maxHealth, health + 2);
+            used = true;
+        }
+        if (!baby && breedCooldown == 0 && loveTicks == 0) {
+            loveTicks = 600;
+            used = true;
+        }
+        return used;
+    }
+
+    /** Walks toward a partner in love and breeds on contact. Returns true while approaching one. */
+    private boolean tryBreed(ServerWorld4 world) {
+        for (Entity4 o : world.entities()) {
+            if (o == this || o.type != type || o.loveTicks <= 0 || o.baby || o.removed) continue;
+            Vec4 d = o.pos.sub(pos);
+            double dist = d.length();
+            if (dist > 8) continue;
+            if (dist > 1.5) {
+                setMove(d.x(), d.z(), d.w(), type.speed);
+                return true;
+            }
+            loveTicks = 0;
+            o.loveTicks = 0;
+            breedCooldown = o.breedCooldown = 6000;
+            Entity4 child = new Entity4(type, Vec4.lerp(pos, o.pos, 0.5));
+            child.baby = true;
+            world.addEntity(child);
+            return false;
+        }
+        return false;
     }
 
     public void hurt(ServerWorld4 world, float amount, Vec4 from, ServerPlayer attacker) {

@@ -18,6 +18,20 @@ public final class SliceManager {
     private static long dirtyMinX = Long.MAX_VALUE, dirtyMinZ, dirtyMaxX, dirtyMaxZ;
     private static boolean dirtyAll;
 
+    /**
+     * While the hyperplane keeps changing (holding a turn button, walking along W), only sections within
+     * {@link #NEAR_RADIUS} sections of the player are rebuilt every step. Everything further away is rebuilt
+     * once the view settles for {@link #SETTLE_TICKS} ticks, or at least every {@link #FAR_INTERVAL} ticks.
+     * Distant terrain briefly lags a rotation instead of the whole world rebuilding 20 times a second.
+     */
+    public static final int NEAR_RADIUS = 3;
+    public static final int SETTLE_TICKS = 4;
+    public static final int FAR_INTERVAL = 20;
+    private static boolean dirtyNear;
+    private static boolean farPending;
+    private static int ticksSinceChange;
+    private static int ticksSinceFar;
+
     /** Depth used for meshing. Axis-aligned slices only change when crossing a whole block. */
     public static double quantizeDepth(SliceFrame f, double depth) {
         if (f.isAxisAligned()) return Math.floor(depth) + 0.5;
@@ -39,6 +53,14 @@ public final class SliceManager {
                 offZ = m.renderZ(p.x(), p.z(), p.w()) - f.localZ(p.x(), p.z(), p.w());
             }
             ClientState4.mesh = new ClientState4.MeshParams(f.copy(), depth, offX, offZ, m.version() + 1);
+            dirtyNear = true;
+            farPending = true;
+            ticksSinceChange = 0;
+        } else {
+            ticksSinceChange++;
+        }
+        ticksSinceFar++;
+        if (farPending && (ticksSinceChange >= SETTLE_TICKS || ticksSinceFar >= FAR_INTERVAL)) {
             dirtyAll = true;
         }
         flush();
@@ -50,6 +72,7 @@ public final class SliceManager {
         SliceFrame f = ClientState4.FRAME;
         ClientState4.mesh = new ClientState4.MeshParams(f.copy(), quantizeDepth(f, f.depthOf(ClientState4.pos)), 0, 0, m.version() + 1);
         dirtyAll = true;
+        farPending = false;
     }
 
     /** Render-space position (vanilla coordinates) of a 4D point under the current mesh mapping. */
@@ -102,11 +125,21 @@ public final class SliceManager {
         int ymax = (Column4.HEIGHT >> 4) - 1;
         int rd = Minecraft.getInstance().options.getEffectiveRenderDistance() + 1;
         int sx = player.blockPosition().getX() >> 4, sz = player.blockPosition().getZ() >> 4;
+        int contentTop = Math.min(ymax, (ClientState4.LEVEL.maxY() >> 4));
         if (dirtyAll) {
             dirtyAll = false;
+            dirtyNear = false;
+            farPending = false;
+            ticksSinceFar = 0;
             dirtyMinX = Long.MAX_VALUE;
-            level.setSectionRangeDirty(sx - rd, 0, sz - rd, sx + rd, ymax, sz + rd);
+            level.setSectionRangeDirty(sx - rd, 0, sz - rd, sx + rd, contentTop, sz + rd);
             return;
+        }
+        if (dirtyNear) {
+            dirtyNear = false;
+            int sy = player.blockPosition().getY() >> 4;
+            level.setSectionRangeDirty(sx - NEAR_RADIUS, Math.max(0, sy - NEAR_RADIUS), sz - NEAR_RADIUS,
+                    sx + NEAR_RADIUS, Math.min(contentTop, sy + NEAR_RADIUS), sz + NEAR_RADIUS);
         }
         if (dirtyMinX != Long.MAX_VALUE) {
             long x0 = Math.max(dirtyMinX, sx - rd), x1 = Math.min(dirtyMaxX, sx + rd);

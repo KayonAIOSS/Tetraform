@@ -21,7 +21,6 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 public final class Movement4 {
     private Movement4() {}
 
-    private static final double WALK = 0.2158, SPRINT = 0.2806, SNEAK_FACTOR = 0.3;
     private static int jumpTapTimer;
     private static boolean lastJump;
     private static Vec4 lastSent;
@@ -69,6 +68,8 @@ public final class Movement4 {
         if (!abilities.mayfly && abilities.flying) abilities.flying = false;
         boolean flying = abilities.flying;
 
+        // Input in the viewer's local frame: x' (strafe), z' (forward), w' (ana/kata strafe along the hidden axis).
+        // Like vanilla, the combined input is normalised so diagonals are never faster.
         float fwd = (in.forward() ? 1 : 0) - (in.backward() ? 1 : 0);
         float str = (in.left() ? 1 : 0) - (in.right() ? 1 : 0);
         float ana = (Keys4.ANA.isDown() ? 1 : 0) - (Keys4.KATA.isDown() ? 1 : 0);
@@ -79,47 +80,72 @@ public final class Movement4 {
         double lw = ana;
         double len = Math.sqrt(lx * lx + lz * lz + lw * lw);
         if (len > 1) { lx /= len; lz /= len; lw /= len; }
-        SliceFrame f = ClientState4.FRAME;
-        Vec4 wish = f.toWorld(lx, 0, lz, lw); // 4D horizontal wish direction
+        boolean sneaking = in.shift() && !flying;
+        if (sneaking) { lx *= 0.3; lz *= 0.3; lw *= 0.3; }
+        Vec4 wish = ClientState4.FRAME.toWorld(lx, 0, lz, lw);
 
-        boolean sprint = in.sprint() && fwd > 0 && !in.shift() && player.getFoodData().getFoodLevel() > 6;
+        boolean sprint = in.sprint() && fwd > 0 && !sneaking && (player.getFoodData().getFoodLevel() > 6 || abilities.mayfly);
         player.setSprinting(sprint);
-        double speed = flying ? (sprint ? 1.0 : 0.55) : (sprint ? SPRINT : WALK);
-        if (in.shift() && !flying) speed *= SNEAK_FACTOR;
         boolean inFluid = ClientState4.LEVEL.isFluidAt(pos.add(0, 0.4, 0, 0));
-        if (inFluid && !flying) speed *= 0.45;
+        boolean ground = ClientState4.onGround;
+        float blockFriction = ground ? ClientState4.LEVEL.getBlock(pos.add(0, -0.5, 0, 0).toBlockPos()).getBlock().getFriction() : 1.0f;
 
         Vec4 v = ClientState4.vel.add(pendingImpulse);
         pendingImpulse = Vec4.ZERO;
-        double accel = flying ? 0.25 : ClientState4.onGround ? 0.6 : inFluid ? 0.2 : 0.06;
-        double vx = v.x() + (wish.x() * speed - v.x()) * accel;
-        double vz = v.z() + (wish.z() * speed - v.z()) * accel;
-        double vw = v.w() + (wish.w() * speed - v.w()) * accel;
-        double vy = v.y();
+        double vx = v.x(), vy = v.y(), vz = v.z(), vw = v.w();
+
+        // vertical impulses (vanilla aiStep order: jump before travel)
         if (flying) {
-            double target = (jump ? 0.42 : 0) - (in.shift() ? 0.42 : 0);
-            vy += (target - vy) * 0.4;
+            double fs = abilities.getFlyingSpeed() * 3;
+            if (jump) vy += fs;
+            if (in.shift()) vy -= fs;
         } else if (inFluid) {
-            vy = jump ? Math.min(vy + 0.04, 0.1) : (vy - 0.02) * 0.8;
-        } else {
-            if (jump && ClientState4.onGround) {
-                vy = 0.42;
-                if (sprint) {
-                    vx += wish.x() * 0.2;
-                    vz += wish.z() * 0.2;
-                    vw += wish.w() * 0.2;
-                }
+            if (jump) vy += 0.04;
+        } else if (jump && ground) {
+            vy = 0.42;
+            if (sprint) {
+                Vec4 face = ClientState4.FRAME.toWorld(-sin, 0, cos, 0);
+                vx += face.x() * 0.2;
+                vz += face.z() * 0.2;
+                vw += face.w() * 0.2;
             }
-            vy = (vy - 0.08) * 0.98;
         }
 
-        AABB4 box = AABB4.ofCenterBottom(pos, 0.3, in.shift() ? 1.5 : 1.8);
+        // horizontal acceleration (vanilla moveRelative)
+        double speedFactor;
+        if (flying) speedFactor = abilities.getFlyingSpeed() * (sprint ? 2 : 1);
+        else if (inFluid) speedFactor = 0.02;
+        else if (ground) speedFactor = player.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.MOVEMENT_SPEED)
+                * (0.21600002f / (blockFriction * blockFriction * blockFriction));
+        else speedFactor = sprint ? 0.025999999 : 0.02;
+        vx += wish.x() * speedFactor;
+        vz += wish.z() * speedFactor;
+        vw += wish.w() * speedFactor;
+
+        AABB4 box = AABB4.ofCenterBottom(pos, 0.3, sneaking ? 1.5 : 1.8);
         Physics4.Result r = player.isSpectator() ? new Physics4.Result(new Vec4(vx, vy, vz, vw), false, false, false)
-                : Physics4.move(ClientState4.LEVEL, box, new Vec4(vx, vy, vz, vw), flying ? 0 : 0.6, ClientState4.onGround);
+                : Physics4.move(ClientState4.LEVEL, box, new Vec4(vx, vy, vz, vw), flying ? 0 : 0.6, ground);
         Vec4 d = r.delta();
         ClientState4.pos = pos.add(d);
         ClientState4.onGround = r.onGround();
-        ClientState4.vel = new Vec4(d.x() != vx ? 0 : vx, r.verticalCollision() ? 0 : vy, d.z() != vz ? 0 : vz, d.w() != vw ? 0 : vw);
+        if (d.x() != vx) vx = 0;
+        if (d.z() != vz) vz = 0;
+        if (d.w() != vw) vw = 0;
+        if (r.verticalCollision()) vy = 0;
+
+        // friction and gravity are applied after moving (vanilla order)
+        if (flying) {
+            vy *= 0.6;
+            vx *= 0.91; vz *= 0.91; vw *= 0.91;
+        } else if (inFluid) {
+            vy = vy * 0.8 - 0.02;
+            vx *= 0.8; vz *= 0.8; vw *= 0.8;
+        } else {
+            vy = (vy - 0.08) * 0.98;
+            double hf = ground ? blockFriction * 0.91 : 0.91;
+            vx *= hf; vz *= hf; vw *= hf;
+        }
+        ClientState4.vel = new Vec4(vx, vy, vz, vw);
         if (flying && r.onGround() && !player.isSpectator()) {
             abilities.flying = false;
             player.onUpdateAbilities();
