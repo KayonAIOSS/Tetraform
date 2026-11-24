@@ -85,6 +85,12 @@ Commands: `/tetra enter`, `/tetra leave`, `/tetra where`, `/tetra rotate <deg>`,
 
 ## Building
 
+Every push builds automatically on GitHub. Open the repository's **Actions** tab, click the latest
+**Build** run, and download the `tetraform-<commit>` artifact under **Artifacts**. It is a zip that contains
+the mod jar. You must be logged in to GitHub to download artifacts.
+
+To build locally:
+
 ```
 ./gradlew build            # -> build/libs/tetraform-0.1.0.jar (needs JDK 25)
 ./gradlew test             # 4D math tests
