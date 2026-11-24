@@ -55,11 +55,21 @@ public final class Tetraform {
                     .isSuffocating((s, l, pos) -> false).isViewBlocking((s, l, pos, box) -> false)
                     .isRedstoneConductor((s, l, pos) -> false).sound(SoundType.EMPTY).noTerrainParticles());
 
+    /** Fourth coordinate of any entity in a 4D level; synced to clients so they can place and slice it. */
+    public static final Supplier<AttachmentType<Double>> ENTITY_W = ATTACHMENTS.register("w",
+            () -> AttachmentType.builder(() -> Double.NaN)
+                    .serialize(com.mojang.serialization.Codec.DOUBLE.fieldOf("w"))
+                    .sync(net.minecraft.network.codec.ByteBufCodecs.DOUBLE)
+                    .build());
+
     public static final Supplier<AttachmentType<PlayerState4>> PLAYER4 = ATTACHMENTS.register("player4",
             () -> AttachmentType.serializable(PlayerState4::new).copyOnDeath().build());
 
     public static final DeferredHolder<ArgumentTypeInfo<?, ?>, SingletonArgumentInfo<Pos4Argument>> POS4_ARG = ARGUMENTS.register("pos4",
             () -> ArgumentTypeInfos.registerByClass(Pos4Argument.class, SingletonArgumentInfo.contextFree(Pos4Argument::pos4)));
+
+    public static final DeferredHolder<ArgumentTypeInfo<?, ?>, SingletonArgumentInfo<dev.tetraform.command.Rot3Argument>> ROT3_ARG = ARGUMENTS.register("rot3",
+            () -> ArgumentTypeInfos.registerByClass(dev.tetraform.command.Rot3Argument.class, SingletonArgumentInfo.contextFree(dev.tetraform.command.Rot3Argument::rot3)));
 
     public Tetraform(IEventBus modBus, ModContainer container) {
         BLOCKS.register(modBus);

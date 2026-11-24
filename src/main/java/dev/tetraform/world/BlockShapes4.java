@@ -19,7 +19,7 @@ public final class BlockShapes4 {
     private static final double[] FULL = {0, 0, 0, 0, 1, 1, 1, 1};
     private static volatile Entry[] cache = new Entry[0];
 
-    private record Entry(double[] collision, double[] render, boolean full, boolean blocksSky, boolean selectable) {}
+    private record Entry(double[] collision, double[] render, boolean full, boolean blocksSky, boolean selectable, boolean fullShape) {}
 
     private BlockShapes4() {}
 
@@ -43,20 +43,23 @@ public final class BlockShapes4 {
     }
 
     private static Entry compute(BlockState state) {
-        if (state.isAir()) return new Entry(null, null, false, false, false);
+        if (state.isAir()) return new Entry(null, null, false, false, false, false);
         double[] col;
         double[] ren;
         boolean full;
+        boolean fullShape;
         try {
             VoxelShape cs = state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
             col = cs.isEmpty() ? null : lift(cs.bounds());
             VoxelShape rs = state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
             ren = rs.isEmpty() ? FULL : lift(rs.bounds());
             full = Block.isShapeFullBlock(rs);
+            fullShape = full;
         } catch (Throwable t) {
             col = FULL;
             ren = FULL;
             full = true;
+            fullShape = true;
         }
         if (state.getBlock() instanceof LiquidBlock) {
             int level = state.getFluidState().getAmount();
@@ -65,10 +68,11 @@ public final class BlockShapes4 {
             ren = new double[]{0, 0, 0, 0, 1, h, 1, 1};
             col = null;
             full = false;
+            fullShape = false;
         }
         boolean blocksSky = state.canOcclude() || !state.getFluidState().isEmpty();
         boolean selectable = !(state.getBlock() instanceof LiquidBlock);
-        return new Entry(col, ren, full && state.canOcclude(), blocksSky, selectable);
+        return new Entry(col, ren, full && state.canOcclude(), blocksSky, selectable, fullShape);
     }
 
     private static double[] lift(AABB b) {
@@ -95,6 +99,9 @@ public final class BlockShapes4 {
 
     /** True if this is an opaque full tesseract (used for face culling). */
     public static boolean fullOpaque(BlockState s) { return entry(s).full; }
+
+    /** True if the block's outline is a whole cube (stone, glass, leaves), false for slabs, plants, torches... */
+    public static boolean fullShape(BlockState s) { return entry(s).fullShape; }
 
     public static boolean blocksSky(BlockState s) { return entry(s).blocksSky; }
 

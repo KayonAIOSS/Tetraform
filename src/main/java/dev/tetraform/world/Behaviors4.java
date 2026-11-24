@@ -1,8 +1,6 @@
 package dev.tetraform.world;
 
 import dev.tetraform.PlayerState4;
-import dev.tetraform.entity.Entity4;
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.math.AABB4;
 import dev.tetraform.math.BlockPos4;
 import dev.tetraform.math.Direction4;
@@ -75,6 +73,8 @@ public final class Behaviors4 {
             else if (!powered && lit) world.schedule(p, 4);
         } else if (b instanceof TntBlock) {
             if (powerAt(p) > 0) prime(p);
+        } else if (b instanceof CommandBlock) {
+            commandBlockNeighbor(p, s);
         }
         // Water touching lava
         if (b instanceof LiquidBlock && isLava(s)) world.schedule(p, 2);
@@ -94,7 +94,9 @@ public final class Behaviors4 {
             world.setBlock(p, s.setValue(ButtonBlock.POWERED, false), true);
             return;
         }
-        if (b instanceof FallingBlock) {
+        if (b instanceof CommandBlock) {
+            tickCommandBlock(p, s);
+        } else if (b instanceof FallingBlock) {
             fall(p, s);
         } else if (b instanceof LiquidBlock) {
             tickFluid(p, s);
@@ -179,7 +181,11 @@ public final class Behaviors4 {
                     newLevel = best;
                 }
             }
-            if (newLevel > maxLevel && newLevel != 8) {
+            // Level 8 means "falling" (full strength) and may only come from fluid directly above. A horizontal
+            // neighbour at level 7 gives 7 + 1 = 8, which must mean "too weak", not "falling": treating it as
+            // falling made the thinnest edge of a flow resurrect itself, so water never drained.
+            boolean falling = sameFluid(s, above);
+            if (!falling && newLevel > maxLevel) {
                 world.setBlock(p, Level4.AIR, true);
                 return;
             }
@@ -200,7 +206,7 @@ public final class Behaviors4 {
         int eff = lvl >= 8 ? 0 : lvl;
         int next = eff + drop;
         if (next > maxLevel) return;
-        for (Direction4 d : Direction4.HORIZONTAL) {
+        for (Direction4 d : spreadDirections(p, s, lava ? 2 : 4)) {
             BlockPos4 np = p.relative(d);
             BlockState n = get(np);
             if (replaceableByFluid(n)) {
@@ -209,6 +215,61 @@ public final class Behaviors4 {
                 world.setBlock(np, s.setValue(LiquidBlock.LEVEL, next), true);
             }
         }
+    }
+
+    private boolean canFlowInto(BlockState s, BlockState n) {
+        return replaceableByFluid(n) || (sameFluid(s, n) && level(n) != 0);
+    }
+
+    /**
+     * Vanilla's flow rule in 4D: of the six horizontal directions, fluid only spreads toward the closest drop
+     * (a place it can fall from) within {@code maxDepth} blocks. With no drop in reach, it spreads every way.
+     * Without this rule, water floods outward evenly instead of running downhill.
+     */
+    private java.util.List<Direction4> spreadDirections(BlockPos4 p, BlockState s, int maxDepth) {
+        // Breadth-first search over the horizontal cells the fluid could flow through (at most ~130 cells for
+        // depth 4), tagging each cell with the starting direction(s) that reach it first.
+        Direction4[] dirs = Direction4.HORIZONTAL;
+        java.util.Map<Long, Integer> tags = new java.util.HashMap<>();
+        java.util.ArrayDeque<BlockPos4> frontier = new java.util.ArrayDeque<>();
+        int found = 0;
+        for (int i = 0; i < dirs.length; i++) {
+            BlockPos4 np = p.relative(dirs[i]);
+            if (!canFlowInto(s, get(np))) continue;
+            if (replaceableByFluid(get(np.below()))) found |= 1 << i;
+            tags.merge(np.asLong(), 1 << i, (x, y) -> x | y);
+            frontier.add(np);
+        }
+        tags.put(p.asLong(), 0);
+        for (int depth = 1; found == 0 && depth <= maxDepth && !frontier.isEmpty(); depth++) {
+            java.util.ArrayDeque<BlockPos4> next = new java.util.ArrayDeque<>();
+            java.util.Map<Long, Integer> nextTags = new java.util.HashMap<>();
+            for (BlockPos4 c : frontier) {
+                int tag = tags.get(c.asLong());
+                for (Direction4 d : dirs) {
+                    BlockPos4 q = c.relative(d);
+                    long k = q.asLong();
+                    if (tags.containsKey(k)) continue;
+                    if (!canFlowInto(s, get(q))) continue;
+                    Integer prev = nextTags.get(k);
+                    if (prev == null) next.add(q);
+                    nextTags.put(k, prev == null ? tag : prev | tag);
+                }
+            }
+            for (BlockPos4 q : next) {
+                int tag = nextTags.get(q.asLong());
+                tags.put(q.asLong(), tag);
+                if (replaceableByFluid(get(q.below()))) found |= tag;
+            }
+            frontier = next;
+        }
+        java.util.List<Direction4> out = new java.util.ArrayList<>(6);
+        for (int i = 0; i < dirs.length; i++) {
+            boolean open = tags.containsKey(p.relative(dirs[i]).asLong()) && canFlowInto(s, get(p.relative(dirs[i])));
+            if (!open) continue;
+            if (found == 0 || (found & (1 << i)) != 0) out.add(dirs[i]);
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ redstone
@@ -400,10 +461,17 @@ public final class Behaviors4 {
             pl.hurtServer(world.serverLevel(), world.serverLevel().damageSources().generic(), dmg);
             world.knockPlayer(pl, pp.sub(c).normalize().scale((1 - d / reach) * 1.6));
         }
-        for (Entity4 e : world.entities()) {
-            double d = e.pos.distance(c);
+        AABB4 area = new AABB4(c.x() - reach, c.y() - reach, c.z() - reach, c.w() - reach, c.x() + reach, c.y() + reach, c.z() + reach, c.w() + reach);
+        for (net.minecraft.world.entity.Entity e : world.entitiesIn(area)) {
+            if (e instanceof ServerPlayer) continue;
+            Vec4 ep = new Vec4(e.getX(), e.getY() + e.getBbHeight() / 2, e.getZ(), W4.get(e));
+            double d = ep.distance(c);
             if (d > reach) continue;
-            e.hurt(world, (float) ((1 - d / reach) * 14), c, null);
+            double f = 1 - d / reach;
+            e.hurtServer(world.serverLevel(), world.serverLevel().damageSources().explosion(null, null), (float) (f * 14));
+            Vec4 push = ep.sub(c).normalize().scale(f * 1.6);
+            e.push(push.x(), Math.max(push.y(), 0.2), push.z());
+            W4.set(e, W4.get(e) + push.w() * 0.5);
         }
     }
 
@@ -421,7 +489,6 @@ public final class Behaviors4 {
         BlockPos4 pos = new BlockPos4(a.x(), a.y(), a.z(), a.w());
         Direction4 face = Direction4.VALUES[Math.floorMod(a.face(), 8)];
         switch (a.action()) {
-            case Net4.ACTION_ATTACK -> attack(p, st, a.entityId());
             case Net4.ACTION_BREAK -> {
                 if (eye(st).distance(pos.center()) > REACH) return;
                 breakBlock(p, pos);
@@ -435,32 +502,31 @@ public final class Behaviors4 {
                 place(p, st, pos, face);
             }
             case Net4.ACTION_PICK -> {
-                BlockState s = get(pos);
-                if (p.isCreative() && !s.isAir()) {
-                    ItemStack stack = new ItemStack(s.getBlock().asItem());
-                    if (!stack.isEmpty()) p.getInventory().setItem(p.getInventory().getSelectedSlot(), stack);
-                }
+                if (eye(st).distance(pos.center()) > REACH + 1) return;
+                pick(p, get(pos));
             }
+
             default -> {}
         }
     }
 
-    private void attack(ServerPlayer p, PlayerState4 st, int id) {
-        float dmg = (float) p.getAttributeValue(Attributes.ATTACK_DAMAGE);
-        Entity4 e = world.entity(id);
-        if (e != null) {
-            if (e.pos.distance(st.pos) > 6) return;
-            e.hurt(world, dmg, st.pos, p);
-            p.resetAttackStrengthTicker();
-            return;
+    /** Middle click: the same rules as vanilla's pick-block (hotbar, then inventory, then creative supply). */
+    private void pick(ServerPlayer p, BlockState s) {
+        if (s.isAir()) return;
+        net.minecraft.world.item.Item item = s.getBlock() instanceof LiquidBlock
+                ? (isLava(s) ? Items.LAVA_BUCKET : Items.WATER_BUCKET) : s.getBlock().asItem();
+        ItemStack stack = new ItemStack(item);
+        if (stack.isEmpty()) return;
+        var inv = p.getInventory();
+        int slot = inv.findSlotMatchingItem(stack);
+        if (slot != -1) {
+            if (net.minecraft.world.entity.player.Inventory.isHotbarSlot(slot)) inv.setSelectedSlot(slot);
+            else inv.pickSlot(slot);
+        } else if (p.hasInfiniteMaterials()) {
+            inv.addAndPickItem(stack);
         }
-        for (ServerPlayer o : world.players()) {
-            if (o.getId() == id && o != p) {
-                if (ServerWorld4.state(o).pos.distance(st.pos) > 6) return;
-                o.hurtServer(world.serverLevel(), world.serverLevel().damageSources().playerAttack(p), dmg);
-                world.knockPlayer(o, ServerWorld4.state(o).pos.sub(st.pos).withY(0).normalize().scale(0.5));
-            }
-        }
+        p.connection.send(new net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket(inv.getSelectedSlot()));
+        p.inventoryMenu.broadcastChanges();
     }
 
     private void breakBlock(ServerPlayer p, BlockPos4 pos) {
@@ -490,6 +556,19 @@ public final class Behaviors4 {
         Block b = s.getBlock();
         ItemStack held = p.getMainHandItem();
         if (!p.isShiftKeyDown() || held.isEmpty()) {
+            if (b instanceof CommandBlock) {
+                if (p.canUseGameMasterBlocks() && world.blockEntityOrCreate(pos) instanceof BlockEntities4.CommandBlock4 cb) {
+                    var last = cb.lastOutput();
+                    net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(p, new Net4.OpenCommandBlock4S2C(pos.asLong(), Block.getId(s),
+                            cb.commandBlock.getCommand(), cb.commandBlock.isTrackOutput(), last == null ? "" : last.getString(), cb.auto));
+                }
+                return;
+            }
+            net.minecraft.world.MenuProvider menu = menuFor(s, pos, p);
+            if (menu != null) {
+                p.openMenu(menu);
+                return;
+            }
             if (b instanceof LeverBlock) {
                 world.setBlock(pos, s.cycle(BlockStateProperties.POWERED), true);
                 playSound(p, SoundEvents.LEVER_CLICK);
@@ -545,6 +624,113 @@ public final class Behaviors4 {
         place(p, st, pos, face);
     }
 
+    /**
+     * Vanilla menus for 4D blocks. Workstations use a container access with no 3D position (always valid), so
+     * vanilla's "is the block still there" check, which would look at the 3D world, never closes them.
+     */
+    private net.minecraft.world.MenuProvider menuFor(BlockState s, BlockPos4 pos, ServerPlayer p) {
+        Block b = s.getBlock();
+        var none = net.minecraft.world.inventory.ContainerLevelAccess.NULL;
+        java.util.function.BiFunction<Integer, net.minecraft.world.entity.player.Inventory, net.minecraft.world.inventory.AbstractContainerMenu> f = null;
+        String title = null;
+        if (b == Blocks.CRAFTING_TABLE) { f = (id, inv) -> new net.minecraft.world.inventory.CraftingMenu(id, inv, none); title = "container.crafting"; }
+        else if (b instanceof StonecutterBlock) { f = (id, inv) -> new net.minecraft.world.inventory.StonecutterMenu(id, inv, none); title = "container.stonecutter"; }
+        else if (b instanceof SmithingTableBlock) { f = (id, inv) -> new net.minecraft.world.inventory.SmithingMenu(id, inv, none); title = "container.upgrade"; }
+        else if (b instanceof LoomBlock) { f = (id, inv) -> new net.minecraft.world.inventory.LoomMenu(id, inv, none); title = "container.loom"; }
+        else if (b instanceof CartographyTableBlock) { f = (id, inv) -> new net.minecraft.world.inventory.CartographyTableMenu(id, inv, none); title = "container.cartography_table"; }
+        else if (b instanceof GrindstoneBlock) { f = (id, inv) -> new net.minecraft.world.inventory.GrindstoneMenu(id, inv, none); title = "container.grindstone_title"; }
+        else if (b instanceof AnvilBlock) { f = (id, inv) -> new net.minecraft.world.inventory.AnvilMenu(id, inv, none); title = "container.repair"; }
+        else if (b instanceof EnchantingTableBlock) {
+            // a 3D position is needed for enchantment options; bookshelf power is 0 (no 4D bookshelf scan yet)
+            var access = new net.minecraft.world.inventory.ContainerLevelAccess() {
+                @Override
+                public <T> java.util.Optional<T> evaluate(java.util.function.BiFunction<net.minecraft.world.level.Level, net.minecraft.core.BlockPos, T> fn) {
+                    return java.util.Optional.ofNullable(fn.apply(world.serverLevel(), new net.minecraft.core.BlockPos(0, world.serverLevel().getMaxY() + 64, 0)));
+                }
+            };
+            f = (id, inv) -> new net.minecraft.world.inventory.EnchantmentMenu(id, inv, access) {
+                @Override
+                public boolean stillValid(net.minecraft.world.entity.player.Player player) {
+                    return true;
+                }
+            };
+            title = "container.enchant";
+        } else if (b instanceof EnderChestBlock) {
+            f = (id, inv) -> net.minecraft.world.inventory.ChestMenu.threeRows(id, inv, p.getEnderChestInventory());
+            title = "container.enderchest";
+        } else if (BlockEntities4.containerSize(s) > 0 && world.blockEntityOrCreate(pos) instanceof BlockEntities4.Container4 ct) {
+            var inv0 = ct.inventory;
+            if (b instanceof ShulkerBoxBlock) { f = (id, inv) -> new net.minecraft.world.inventory.ShulkerBoxMenu(id, inv, inv0); title = "container.shulkerBox"; }
+            else if (b instanceof HopperBlock) { f = (id, inv) -> new net.minecraft.world.inventory.HopperMenu(id, inv, inv0); title = "container.hopper"; }
+            else if (b instanceof DispenserBlock) { f = (id, inv) -> new net.minecraft.world.inventory.DispenserMenu(id, inv, inv0); title = b instanceof DropperBlock ? "container.dropper" : "container.dispenser"; }
+            else { f = (id, inv) -> net.minecraft.world.inventory.ChestMenu.threeRows(id, inv, inv0); title = b instanceof BarrelBlock ? "container.barrel" : "container.chest"; }
+        }
+        if (f == null) return null;
+        var factory = f;
+        return new net.minecraft.world.SimpleMenuProvider((id, inv, pl) -> factory.apply(id, inv), net.minecraft.network.chat.Component.translatable(title));
+    }
+
+    // ------------------------------------------------------------------ command blocks
+
+    static Direction4 dir4(Direction d) {
+        return switch (d) {
+            case EAST -> Direction4.EAST;
+            case WEST -> Direction4.WEST;
+            case NORTH -> Direction4.NORTH;
+            case SOUTH -> Direction4.SOUTH;
+            case UP -> Direction4.UP;
+            case DOWN -> Direction4.DOWN;
+        };
+    }
+
+    private static net.minecraft.world.level.block.entity.CommandBlockEntity.Mode mode(BlockState s) {
+        if (s.is(Blocks.CHAIN_COMMAND_BLOCK)) return net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.SEQUENCE;
+        if (s.is(Blocks.REPEATING_COMMAND_BLOCK)) return net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.AUTO;
+        return net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.REDSTONE;
+    }
+
+    private void commandBlockNeighbor(BlockPos4 p, BlockState s) {
+        if (!(world.blockEntityOrCreate(p) instanceof BlockEntities4.CommandBlock4 cb)) return;
+        boolean powered = powerAt(p) > 0;
+        if (powered == cb.powered) return;
+        cb.powered = powered;
+        cb.markChanged();
+        if (powered && !cb.auto && mode(s) != net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.SEQUENCE) world.schedule(p, 1);
+    }
+
+    private boolean conditionMet(BlockPos4 p, BlockState s) {
+        if (!s.getValue(CommandBlock.CONDITIONAL)) return true;
+        BlockPos4 behind = p.relative(dir4(s.getValue(CommandBlock.FACING)).opposite());
+        return world.blockEntity(behind) instanceof BlockEntities4.CommandBlock4 b && b.commandBlock.getSuccessCount() > 0;
+    }
+
+    /** Vanilla command block semantics (impulse / repeat / chain, conditional, always active) in 4D. */
+    public void tickCommandBlock(BlockPos4 p, BlockState s) {
+        if (!(world.blockEntityOrCreate(p) instanceof BlockEntities4.CommandBlock4 cb)) return;
+        var mode = mode(s);
+        if (mode == net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.SEQUENCE) return;
+        if (!cb.powered && !cb.auto) return;
+        run(p, s, cb);
+        // chain forward along FACING
+        BlockPos4 cur = p;
+        BlockState cs = s;
+        for (int i = 0; i < 64; i++) {
+            cur = cur.relative(dir4(cs.getValue(CommandBlock.FACING)));
+            cs = get(cur);
+            if (!cs.is(Blocks.CHAIN_COMMAND_BLOCK)) break;
+            if (!(world.blockEntityOrCreate(cur) instanceof BlockEntities4.CommandBlock4 next)) break;
+            if (next.powered || next.auto) run(cur, cs, next);
+            else next.commandBlock.setSuccessCount(0);
+        }
+        if (mode == net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.AUTO) world.schedule(p, 1);
+    }
+
+    private void run(BlockPos4 p, BlockState s, BlockEntities4.CommandBlock4 cb) {
+        cb.conditionMet = conditionMet(p, s);
+        if (cb.conditionMet) cb.execute(world.serverLevel());
+        else cb.commandBlock.setSuccessCount(0);
+    }
+
     private void place(ServerPlayer p, PlayerState4 st, BlockPos4 clicked, Direction4 face) {
         ItemStack held = p.getMainHandItem();
         InteractionHand hand = InteractionHand.MAIN_HAND;
@@ -554,6 +740,7 @@ public final class Behaviors4 {
             if (!(held.getItem() instanceof BlockItem)) return;
         }
         BlockItem bi = (BlockItem) held.getItem();
+        if (bi.getBlock() instanceof GameMasterBlock && !p.canUseGameMasterBlocks()) return;
         BlockPos4 target = get(clicked).canBeReplaced() ? clicked : clicked.relative(face);
         if (target.y() < 0 || target.y() >= Column4.HEIGHT) return;
         BlockState existing = get(target);
@@ -602,6 +789,9 @@ public final class Behaviors4 {
         if (s.hasProperty(BlockStateProperties.AXIS)) {
             Direction.Axis axis = d3 == null ? Direction.Axis.Y : d3.getAxis();
             s = s.setValue(BlockStateProperties.AXIS, axis);
+        }
+        if (s.hasProperty(BlockStateProperties.FACING)) {
+            s = s.setValue(BlockStateProperties.FACING, p.getNearestViewDirection().getOpposite());
         }
         if (s.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
             s = s.setValue(BlockStateProperties.HORIZONTAL_FACING, p.getDirection().getOpposite());

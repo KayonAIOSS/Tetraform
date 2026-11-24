@@ -8,8 +8,6 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.tree.CommandNode;
 import dev.tetraform.PlayerState4;
 import dev.tetraform.Tetraform;
-import dev.tetraform.entity.Entity4;
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.math.BlockPos4;
 import dev.tetraform.math.SliceFrame;
 import dev.tetraform.math.Vec4;
@@ -35,7 +33,7 @@ import java.util.function.Predicate;
 /**
  * Four-dimensional versions of the vanilla world commands. They are merged into the vanilla command roots, so
  * {@code /setblock x y z w block}, {@code /fill x1 y1 z1 w1 x2 y2 z2 w2 block} (8 coordinates instead of 6),
- * {@code /clone}, {@code /tp x y z w} and {@code /summon tetraform:<mob> x y z w} all work. Three-coordinate forms
+ * {@code /clone}, {@code /tp x y z w} and {@code /summon <entity> x y z w} all work. Three-coordinate forms
  * still reach vanilla.
  */
 public final class Commands4 {
@@ -72,26 +70,34 @@ public final class Commands4 {
         for (String name : new String[]{"tp", "teleport"}) {
             d.register(Commands.literal(name).requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                     .then(Commands.argument("location4", Pos4Argument.pos4())
-                            .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"))))
+                            .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"), null))
+                            .then(Commands.argument("rotation4", Rot3Argument.rot3())
+                                    .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))
                     .then(Commands.argument("targets", EntityArgument.players())
                             .then(Commands.argument("location4", Pos4Argument.pos4())
-                                    .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"))))));
+                                    .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"), null))
+                                    .then(Commands.argument("rotation4", Rot3Argument.rot3())
+                                            .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))));
         }
 
-        var summon = Commands.literal("summon").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS));
-        for (Entity4Type t : Entity4Type.VALUES) {
-            if (t == Entity4Type.PLAYER || t == Entity4Type.ITEM) continue;
-            String lit = "tetraform:" + t.name().toLowerCase(Locale.ROOT);
-            summon.then(Commands.literal(lit)
-                    .executes(c -> summon(c, t, Pos4Argument.origin(c.getSource())))
-                    .then(Commands.argument("pos4", Pos4Argument.pos4()).executes(c -> summon(c, t, Pos4Argument.getVec(c, "pos4")))));
-        }
-        d.register(summon);
+        // merged into vanilla's "/summon <entity>" node: a 4-number position spawns any vanilla entity in 4D
+        d.register(Commands.literal("summon").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                .then(Commands.argument("entity", net.minecraft.commands.arguments.ResourceArgument.resource(ctx, net.minecraft.core.registries.Registries.ENTITY_TYPE))
+                        .then(Commands.argument("pos4", Pos4Argument.pos4())
+                                .executes(c -> summon(c, net.minecraft.commands.arguments.ResourceArgument.getSummonableEntityType(c, "entity").value(),
+                                        Pos4Argument.getVec(c, "pos4"), null))
+                                .then(Commands.argument("nbt", net.minecraft.commands.arguments.CompoundTagArgument.compoundTag())
+                                        .executes(c -> summon(c, net.minecraft.commands.arguments.ResourceArgument.getSummonableEntityType(c, "entity").value(),
+                                                Pos4Argument.getVec(c, "pos4"), net.minecraft.commands.arguments.CompoundTagArgument.getCompoundTag(c, "nbt")))))));
 
         d.register(Commands.literal("tetra")
                 .then(Commands.literal("enter").executes(Commands4::enter))
                 .then(Commands.literal("leave").executes(Commands4::leave))
                 .then(Commands.literal("where").executes(Commands4::where))
+                .then(Commands.literal("locate").executes(c -> locate(c, null))
+                        .then(Commands.argument("kind", com.mojang.brigadier.arguments.StringArgumentType.word())
+                                .suggests((c, b) -> net.minecraft.commands.SharedSuggestionProvider.suggest(new String[]{"village", "ruined_portal", "igloo", "shipwreck"}, b))
+                                .executes(c -> locate(c, com.mojang.brigadier.arguments.StringArgumentType.getString(c, "kind")))))
                 .then(Commands.literal("reset").executes(c -> rotate(c, 0, true)))
                 .then(Commands.literal("rotate").then(Commands.argument("degrees", DoubleArgumentType.doubleArg(-360, 360))
                         .executes(c -> rotate(c, DoubleArgumentType.getDouble(c, "degrees"), false))))
@@ -100,10 +106,15 @@ public final class Commands4 {
                                 .executes(c -> explode(c, 4f))
                                 .then(Commands.argument("power", FloatArgumentType.floatArg(0.5f, 12f))
                                         .executes(c -> explode(c, FloatArgumentType.getFloat(c, "power"))))))
-                .then(Commands.literal("killmobs").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(Commands4::killMobs)));
+                .then(Commands.literal("probe").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                        .then(Commands.argument("pos4", Pos4Argument.pos4()).executes(Commands4::probe)))
+                .then(Commands.literal("trace").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                        .then(Commands.argument("pos4", Pos4Argument.pos4()).executes(Commands4::trace)))
+                .then(Commands.literal("fluids").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(Commands4::fluids))
+                );
 
         // Make the 4D branches win over vanilla's when both parse the same input (e.g. "tp 1 2 3 4").
-        for (String root : new String[]{"setblock", "fill", "clone", "tp", "teleport"}) {
+        for (String root : new String[]{"setblock", "fill", "clone", "tp", "teleport", "summon"}) {
             CommandNode<CommandSourceStack> node = d.getRoot().getChild(root);
             if (node != null) prioritize(node);
         }
@@ -120,6 +131,7 @@ public final class Commands4 {
             reorder((Map<String, Object>) children.get(node));
             reorder((Map<String, Object>) arguments.get(node));
             CommandNode<CommandSourceStack> targets = node.getChild("targets");
+            if (targets == null) targets = node.getChild("entity");
             if (targets != null) {
                 reorder((Map<String, Object>) children.get(targets));
                 reorder((Map<String, Object>) arguments.get(targets));
@@ -228,18 +240,48 @@ public final class Commands4 {
         return n;
     }
 
-    private static int tp(CommandContext<CommandSourceStack> c, Collection<ServerPlayer> players, Vec4 to) {
+    private static int tp(CommandContext<CommandSourceStack> c, Collection<ServerPlayer> players, Vec4 to, Rot3Argument.Rot rot) {
         ServerWorld4 w = world(c);
-        for (ServerPlayer p : players) w.teleport(p, to, null);
-        c.getSource().sendSuccess(() -> Component.literal("Teleported " + players.size() + " player(s) to " + to), true);
+        for (ServerPlayer p : players) {
+            if (rot == null) {
+                w.teleport(p, to, null);
+            } else {
+                PlayerState4 st = ServerWorld4.state(p);
+                float yaw = (float) rot.yaw(p.getYRot());
+                float pitch = (float) Math.max(-90, Math.min(90, rot.pitch(p.getXRot())));
+                double zw = Math.toRadians(rot.zw(Math.toDegrees(st.frame.zwAngle())));
+                w.teleport(p, to, SliceFrame.zw(zw), yaw, pitch);
+            }
+        }
+        c.getSource().sendSuccess(() -> Component.literal("Teleported " + players.size() + " player(s) to " + to
+                + (rot == null ? "" : " facing (yaw / pitch / zw)")), true);
         return players.size();
     }
 
-    private static int summon(CommandContext<CommandSourceStack> c, Entity4Type type, Vec4 pos) {
+    private static int summon(CommandContext<CommandSourceStack> c, net.minecraft.world.entity.EntityType<?> type, Vec4 pos,
+                              net.minecraft.nbt.CompoundTag nbt) {
         ServerWorld4 w = world(c);
         w.loadNow((int) Math.floor(pos.x()) >> 4, (int) Math.floor(pos.z()) >> 4, (int) Math.floor(pos.w()) >> 4);
-        w.addEntity(new Entity4(type, pos));
-        c.getSource().sendSuccess(() -> Component.literal("Summoned " + type.name().toLowerCase(Locale.ROOT) + " at " + pos), true);
+        var e = w.spawn(type, pos, net.minecraft.world.entity.EntitySpawnReason.COMMAND, nbt);
+        if (e == null) {
+            c.getSource().sendFailure(Component.literal("Unable to summon entity"));
+            return 0;
+        }
+        c.getSource().sendSuccess(() -> Component.translatable("commands.summon.success", e.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int locate(CommandContext<CommandSourceStack> c, String kind) throws CommandSyntaxException {
+        ServerWorld4 w = world(c);
+        var st = w.generator().structures;
+        Vec4 from = c.getSource().getEntity() instanceof ServerPlayer p ? w.pos4(p)
+                : new Vec4(c.getSource().getPosition().x, c.getSource().getPosition().y, c.getSource().getPosition().z, 0.5);
+        String r = st == null ? null : st.locate(from, kind);
+        if (r == null) {
+            c.getSource().sendFailure(Component.literal("No 4D structure found nearby"));
+            return 0;
+        }
+        c.getSource().sendSuccess(() -> Component.literal("Nearest " + r), false);
         return 1;
     }
 
@@ -294,12 +336,87 @@ public final class Commands4 {
         return 1;
     }
 
-    private static int killMobs(CommandContext<CommandSourceStack> c) {
+    /** Debug: counts fluid blocks by level within 24 blocks of the player (4D box). */
+    private static int fluids(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
         ServerWorld4 w = world(c);
-        int n = 0;
-        for (Entity4 e : w.entities()) if (e.type != Entity4Type.PLAYER) { e.removed = true; n++; }
-        int k = n;
-        c.getSource().sendSuccess(() -> Component.literal("Removed " + k + " 4D entities"), true);
-        return n;
+        BlockPos4 o = ServerWorld4.state(p).pos.toBlockPos();
+        int[] water = new int[16], lava = new int[16];
+        int r = 24;
+        for (int dw = -r; dw <= r; dw++) for (int dz = -r; dz <= r; dz++) for (int dx = -r; dx <= r; dx++) for (int y = Math.max(0, o.y() - 12); y <= o.y() + 12; y++) {
+            BlockState s = w.getBlock(new BlockPos4(o.x() + dx, y, o.z() + dz, o.w() + dw));
+            if (s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock) {
+                int lvl = s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL);
+                if (s.getFluidState().is(net.minecraft.tags.FluidTags.LAVA)) lava[lvl]++; else water[lvl]++;
+            }
+        }
+        c.getSource().sendSuccess(() -> Component.literal("water by level " + Arrays.toString(water) + " lava " + Arrays.toString(lava)), false);
+        // describe one level-1 cell and its neighbourhood (debug aid)
+        outer:
+        for (int dw = -r; dw <= r; dw++) for (int dz = -r; dz <= r; dz++) for (int dx = -r; dx <= r; dx++) for (int y = Math.max(0, o.y() - 12); y <= o.y() + 12; y++) {
+            BlockPos4 bp = new BlockPos4(o.x() + dx, y, o.z() + dz, o.w() + dw);
+            BlockState s = w.getBlock(bp);
+            if (s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock && s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) == 1) {
+                StringBuilder sb = new StringBuilder("level-1 at " + bp + ":");
+                for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.VALUES) {
+                    BlockState n = w.getBlock(bp.relative(d));
+                    String v = n.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock ? "w" + n.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) : n.getBlock().getName().getString();
+                    sb.append(" ").append(d.name()).append("=").append(v);
+                }
+                String msg = sb.toString();
+                c.getSource().sendSuccess(() -> Component.literal(msg), false);
+                break outer;
+            }
+        }
+        return 1;
     }
+
+    private static String describe(BlockState n) {
+        return n.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock
+                ? "w" + n.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) : n.getBlock().getName().getString();
+    }
+
+    /** Debug: a block and its eight 4D neighbours. */
+    private static int probe(CommandContext<CommandSourceStack> c) {
+        ServerWorld4 w = world(c);
+        BlockPos4 bp = Pos4Argument.getVec(c, "pos4").toBlockPos();
+        for (int dw = -1; dw <= 1; dw++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+            w.loadNow((bp.x() + dx) >> 4, (bp.z() + dz) >> 4, (bp.w() + dw) >> 4);
+        StringBuilder sb = new StringBuilder(bp + " = " + describe(w.getBlock(bp)) + ":");
+        for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.VALUES) sb.append(" ").append(d.name()).append("=").append(describe(w.getBlock(bp.relative(d))));
+        String msg = sb.toString();
+        c.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    /** Debug: follows the strongest horizontal water neighbour until a source/falling block. */
+    private static int trace(CommandContext<CommandSourceStack> c) {
+        ServerWorld4 w = world(c);
+        BlockPos4 bp = Pos4Argument.getVec(c, "pos4").toBlockPos();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 12; i++) {
+            for (int dw = -1; dw <= 1; dw++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+                w.loadNow((bp.x() + dx) >> 4, (bp.z() + dz) >> 4, (bp.w() + dw) >> 4);
+            BlockState s = w.getBlock(bp);
+            sb.append(bp).append("=").append(describe(s)).append(" above=").append(describe(w.getBlock(bp.above()))).append(" | ");
+            if (!(s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock)) break;
+            int lvl = s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL);
+            if (lvl == 0 || lvl >= 8) break;
+            BlockPos4 best = null;
+            int bestEff = 99;
+            for (dev.tetraform.math.Direction4 d : dev.tetraform.math.Direction4.HORIZONTAL) {
+                BlockState n = w.getBlock(bp.relative(d));
+                if (n.getBlock() != s.getBlock()) continue;
+                int nl = n.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL);
+                int eff = nl >= 8 ? 0 : nl;
+                if (eff < bestEff) { bestEff = eff; best = bp.relative(d); }
+            }
+            if (best == null) break;
+            bp = best;
+        }
+        String msg = sb.toString();
+        c.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
 }

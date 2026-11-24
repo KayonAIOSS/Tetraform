@@ -41,6 +41,9 @@ public final class SpriteCache {
             synchronized (SpriteCache.class) {
                 if (set != cachedFor) {
                     cache = new Faces[Block.BLOCK_STATE_REGISTRY.size()];
+                    PARTS.clear();
+                    TINTS.clear();
+                    MeshCache.clear();
                     cachedFor = set;
                 }
             }
@@ -108,6 +111,42 @@ public final class SpriteCache {
             layers[d.ordinal()] = out.toArray(new Layer[0]);
         }
         return new Faces(layers);
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<BlockState, List<BlockStateModelPart>> PARTS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Baked model parts of a state (first random variant), cached so meshing does not re-collect them per block. */
+    @SuppressWarnings("deprecation")
+    public static List<BlockStateModelPart> parts(BlockState state) {
+        get(state); // keeps the cache keyed to the current model set
+        return PARTS.computeIfAbsent(state, st -> {
+            List<BlockStateModelPart> out = new ArrayList<>();
+            try {
+                Minecraft.getInstance().getModelManager().getBlockStateModelSet().get(st).collectParts(RandomSource.create(42L), out);
+            } catch (Throwable ignored) {
+            }
+            return List.copyOf(out);
+        });
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<Long, Integer> TINTS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** ARGB tint for a model tint index (default biome colours; there are no 3D biomes in a 4D world). */
+    public static int tint(BlockState state, int tintIndex) {
+        long key = ((long) Block.getId(state) << 8) | (tintIndex & 0xFF);
+        Integer c = TINTS.get(key);
+        if (c != null) return c;
+        int v = -1;
+        BlockTintSource src = Minecraft.getInstance().getBlockColors().getTintSource(state, tintIndex);
+        if (src != null) {
+            try {
+                v = 0xFF000000 | src.color(state);
+            } catch (Throwable t) {
+                v = 0xFF7FB238;
+            }
+        }
+        TINTS.put(key, v);
+        return v;
     }
 
     private static void addQuad(List<Layer> out, BakedQuad q, BlockState state, int emission) {

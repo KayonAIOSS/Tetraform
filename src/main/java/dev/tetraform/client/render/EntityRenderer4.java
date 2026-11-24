@@ -3,7 +3,6 @@ package dev.tetraform.client.render;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.tetraform.client.ClientState4;
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.math.BlockPos4;
 import dev.tetraform.math.Direction4;
 import dev.tetraform.math.SliceFrame;
@@ -53,65 +52,48 @@ public final class EntityRenderer4 {
         Vec4 eye = Vec4.lerp(ClientState4.prevPos, ClientState4.pos, pt);
         double depth = m.depthOf(eye);
 
-        List<Poly> solid = new ArrayList<>();
-        for (ClientState4.EntityState es : ClientState4.ENTITIES.values()) {
-            Net4.EntityView now = es.now, prev = es.prev == null ? now : es.prev;
-            Entity4Type type = Entity4Type.VALUES[Math.floorMod(now.type(), Entity4Type.VALUES.length)];
-            Vec4 p = new Vec4(prev.x() + (now.x() - prev.x()) * pt, prev.y() + (now.y() - prev.y()) * pt,
-                    prev.z() + (now.z() - prev.z()) * pt, prev.w() + (now.w() - prev.w()) * pt);
-            if (Math.abs(m.depthOf(p) - depth) > 3) continue;
-            BlockState itemTex = null;
-            if (type == Entity4Type.ITEM) {
-                Item item = BuiltInRegistries.ITEM.byId(now.extra());
-                itemTex = item instanceof BlockItem bi ? bi.getBlock().defaultBlockState() : null;
-            }
-            SliceFrame body = composite(now.frame(), m);
-            double ccx = mp.renderX(p.x(), p.z(), p.w()), ccz = mp.renderZ(p.x(), p.z(), p.w());
-            Vec4 n = m.normal();
-            double localDepth = depth - (n.x() * p.x() + n.z() * p.z() + n.w() * p.w());
-            SLICER.setPlane(body, localDepth, cam.x - ccx, cam.z - ccz);
-            int color = now.hurt() > 0 ? 0xFFFF7070 : 0xFFFFFFFF;
-            int sky = p.y() + 1 >= ClientState4.LEVEL.heightAt((int) Math.floor(p.x()), (int) Math.floor(p.z()), (int) Math.floor(p.w())) ? 15 : 5;
-            int light = LightCoordsUtil.pack(type == Entity4Type.STALKER ? 7 : 0, sky);
-            double dy = p.y() - cam.y;
-            for (Entity4Type.Part part : type.parts(itemTex)) {
-                double[] b = part.box();
-                SpriteCache.Faces faces = SpriteCache.get(part.texture());
-                SLICER.slice(b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], 0xFF, 0, 0, 0, 0,
-                        (dir, cnt, pos, uv, nx, ny, nz) -> {
-                            float[] pp = new float[cnt * 3];
-                            for (int i = 0; i < cnt; i++) {
-                                pp[i * 3] = pos[i * 3];
-                                pp[i * 3 + 1] = (float) (pos[i * 3 + 1] + dy);
-                                pp[i * 3 + 2] = pos[i * 3 + 2];
-                            }
-                            float[] uu = normalizeUv(uv, cnt);
-                            SpriteCache.Layer l = faces.layers()[dir.ordinal()][0];
-                            int c = l.tint() == -1 ? color : mul(color, l.tint());
-                            solid.add(new Poly(l.sprite(), cnt, pp, uu, nx, ny, nz, c, light));
-                        });
-            }
-        }
-
         PoseStack ps = event.getPoseStack();
-        if (!solid.isEmpty()) {
-            event.getSubmitNodeCollector().submitCustomGeometry(ps, RenderTypes.entityCutout(TextureAtlas.LOCATION_BLOCKS),
-                    (pose, buf) -> { for (Poly poly : solid) emit(pose, buf, poly); });
-        }
         submitSelection(event, mp, depth, cam);
     }
 
     private static void submitSelection(SubmitCustomGeometryEvent event, ClientState4.MeshParams mp, double depth, Vec3 cam) {
         SliceFrame m = mp.frame();
         var hit = ClientState4.target;
-        if (hit == null || ClientState4.targetEntity >= 0) return;
+        if (hit == null || ClientState4.targetEntity != null) return;
         BlockPos4 bp = hit.pos();
         BlockState s = ClientState4.LEVEL.getBlock(bp);
         if (s.isAir()) return;
+        PoseStack ps = event.getPoseStack();
+
+        // Vanilla-style outline: the block's real outline shape, placed in its cross-section of the slice.
+        double zc = m.get(1, 1), zs = m.get(2, 1);
+        boolean zwFrame = Math.abs(m.get(0, 0) - 1) < 1.0E-9 && Math.abs(m.normalX()) < 1.0E-9;
+        double[] cut = zwFrame ? SliceMesher.cut(zc, zs, mp.depth(), bp.z(), bp.w()) : null;
+        if (cut != null) {
+            double len = cut[1] - cut[0];
+            boolean flip = zc < 0;
+            net.minecraft.world.phys.shapes.VoxelShape shape = s.getShape(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, net.minecraft.core.BlockPos.ZERO);
+            if (shape.isEmpty()) shape = net.minecraft.world.phys.shapes.Shapes.block();
+            net.minecraft.world.phys.shapes.VoxelShape mapped = net.minecraft.world.phys.shapes.Shapes.empty();
+            for (net.minecraft.world.phys.AABB a : shape.toAabbs()) {
+                double x0 = flip ? 1 - a.maxX : a.minX, x1 = flip ? 1 - a.minX : a.maxX;
+                double z0 = flip ? 1 - a.maxZ : a.minZ, z1 = flip ? 1 - a.minZ : a.maxZ;
+                mapped = net.minecraft.world.phys.shapes.Shapes.or(mapped,
+                        net.minecraft.world.phys.shapes.Shapes.box(x0, a.minY, z0 * len, x1, a.maxY, z1 * len));
+            }
+            double rx = bp.x() + mp.offX(), rz = cut[0] + mp.offZ();
+            ps.pushPose();
+            ps.translate(rx - cam.x, bp.y() - cam.y, rz - cam.z);
+            float width = Minecraft.getInstance().gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth;
+            event.getSubmitNodeCollector().submitShapeOutline(ps, mapped, RenderTypes.linesTranslucent(), 0x66000000,
+                    width > 0 ? width : 2.5f, false);
+            ps.popPose();
+        }
+
+        // breaking cracks on the actual sliced faces
+        if (ClientState4.breaking == null || !ClientState4.breaking.equals(bp) || ClientState4.breakProgress <= 0) return;
         double[] b = BlockShapes4.render(s);
-        double e = 0.004;
-        TextureAtlasSprite white = SpriteCache.get(Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.WHITE).defaultBlockState()).layers()[0][0].sprite();
-        List<Poly> polys = new ArrayList<>();
+        double e = 0.002;
         List<Poly> crack = new ArrayList<>();
         SLICER.setPlane(m, depth, cam.x - mp.offX(), cam.z - mp.offZ());
         double dy = -cam.y;
@@ -122,18 +104,11 @@ public final class EntityRenderer4 {
                     for (int i = 0; i < cnt; i++) pp[i * 3 + 1] += (float) dy;
                     float[] uu = uv.clone();
                     for (int i = 0; i < cnt * 2; i++) uu[i] = Math.max(0, Math.min(1, uu[i]));
-                    polys.add(new Poly(white, cnt, pp, uu, nx, ny, nz, 0x40FFFFFF, LightCoordsUtil.pack(15, 15)));
                     crack.add(new Poly(null, cnt, pp, uu, nx, ny, nz, 0xFFFFFFFF, LightCoordsUtil.pack(15, 15)));
                 });
-        if (polys.isEmpty()) return;
-        PoseStack ps = event.getPoseStack();
-        event.getSubmitNodeCollector().submitCustomGeometry(ps, RenderTypes.entityTranslucent(TextureAtlas.LOCATION_BLOCKS),
-                (pose, buf) -> { for (Poly p : polys) emit(pose, buf, p); });
-        if (ClientState4.breaking != null && ClientState4.breaking.equals(bp) && ClientState4.breakProgress > 0) {
-            int stage = Math.min(9, (int) (ClientState4.breakProgress * 10));
-            RenderType rt = RenderTypes.crumbling(Identifier.withDefaultNamespace("textures/block/destroy_stage_" + stage + ".png"));
-            event.getSubmitNodeCollector().submitCustomGeometry(ps, rt, (pose, buf) -> { for (Poly p : crack) emit(pose, buf, p); });
-        }
+        int stage = Math.min(9, (int) (ClientState4.breakProgress * 10));
+        RenderType rt = RenderTypes.crumbling(Identifier.withDefaultNamespace("textures/block/destroy_stage_" + stage + ".png"));
+        event.getSubmitNodeCollector().submitCustomGeometry(ps, rt, (pose, buf) -> { for (Poly p : crack) emit(pose, buf, p); });
     }
 
     private static void emit(PoseStack.Pose pose, VertexConsumer buf, Poly p) {

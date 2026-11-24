@@ -3,8 +3,6 @@ package dev.tetraform.world;
 import dev.tetraform.Config4;
 import dev.tetraform.PlayerState4;
 import dev.tetraform.Tetraform;
-import dev.tetraform.entity.Entity4;
-import dev.tetraform.entity.Entity4Type;
 import dev.tetraform.math.AABB4;
 import dev.tetraform.math.BlockPos4;
 import dev.tetraform.math.Direction4;
@@ -12,6 +10,7 @@ import dev.tetraform.math.SliceFrame;
 import dev.tetraform.math.Vec4;
 import dev.tetraform.net.Net4;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -48,7 +47,7 @@ public final class ServerWorld4 {
     private final Map<Long, CompletableFuture<Column4>> loading = new HashMap<>();
     private final Map<Long, Long> lastNeeded = new HashMap<>();
     private final Map<UUID, Tracker> trackers = new HashMap<>();
-    private final Map<Integer, Entity4> entities = new LinkedHashMap<>();
+    private final Map<Long, BlockEntities4.BE4> blockEntities = new HashMap<>();
     private final Set<Long> changedBlocks = new LinkedHashSet<>();
     private final PriorityQueue<Scheduled> scheduled = new PriorityQueue<>();
     private final Set<Long> scheduledKeys = new HashSet<>();
@@ -76,6 +75,7 @@ public final class ServerWorld4 {
         this.server = server;
         this.level = level;
         this.generator = new TerrainGenerator4(level.getSeed());
+        this.generator.structures = new Structures4(server, generator, level.getSeed());
         int threads = Config4.GEN_THREADS.get();
         if (threads <= 0) threads = Math.max(1, Math.min(6, Runtime.getRuntime().availableProcessors() - 2));
         this.workers = Executors.newFixedThreadPool(threads, r -> {
@@ -202,9 +202,10 @@ public final class ServerWorld4 {
     public void sendTeleport(ServerPlayer p, boolean reset) {
         PlayerState4 st = state(p);
         st.lastUpdate = tick;
-        double[] rp = PlayerState4.renderPosition(st.frame, st.pos);
+        // the server keeps players' vanilla positions in true world coordinates (x, y, z); W is separate
+        W4.set(p, st.pos.w());
         if (p.level() == level) {
-            p.connection.teleport(rp[0], rp[1], rp[2], p.getYRot(), p.getXRot());
+            p.connection.teleport(st.pos.x(), st.pos.y(), st.pos.z(), p.getYRot(), p.getXRot());
         }
         PacketDistributor.sendToPlayer(p, new Net4.Teleport4S2C(st.pos.x(), st.pos.y(), st.pos.z(), st.pos.w(), st.frame.values(), reset));
         Tracker t = trackers.get(p.getUUID());
@@ -213,6 +214,14 @@ public final class ServerWorld4 {
 
     /** Moves a player to a 4D location, bringing them into the tesseract dimension first if needed. */
     public void teleport(ServerPlayer p, Vec4 target, SliceFrame frame) {
+        teleport(p, target, frame, p.getYRot(), p.getXRot());
+    }
+
+    /** Teleport with an explicit view: vanilla yaw and pitch plus (via {@code frame}) the zw rotation. */
+    public void teleport(ServerPlayer p, Vec4 target, SliceFrame frame, float yaw, float pitch) {
+        p.setYRot(yaw);
+        p.setXRot(pitch);
+        p.setYHeadRot(yaw);
         PlayerState4 st = state(p);
         st.pos = target;
         st.initialized = true;
@@ -220,8 +229,8 @@ public final class ServerWorld4 {
         if (frame != null) st.frame.set(frame);
         loadNow((int) Math.floor(target.x()) >> 4, (int) Math.floor(target.z()) >> 4, (int) Math.floor(target.w()) >> 4);
         if (p.level() != level) {
-            double[] rp = PlayerState4.renderPosition(st.frame, st.pos);
-            p.teleportTo(level, rp[0], rp[1], rp[2], Set.of(), p.getYRot(), p.getXRot(), true);
+            W4.set(p, st.pos.w());
+            p.teleportTo(level, st.pos.x(), st.pos.y(), st.pos.z(), Set.of(), yaw, pitch, true);
             // onPlayerEnter is triggered by the dimension change event
         } else {
             sendTeleport(p, false);
@@ -243,6 +252,7 @@ public final class ServerWorld4 {
             return;
         }
         st.pos = np;
+        W4.set(p, np.w());
         SliceFrame f = new SliceFrame(m.frame());
         f.orthonormalize();
         st.frame.set(f);
@@ -278,13 +288,51 @@ public final class ServerWorld4 {
         CompletableFuture<Column4> f = loading.remove(key);
         c = f != null ? f.join() : loadOrGenerate(cx, cz, cw);
         level4.columns.put(key, c);
+        loadBlockEntities(c);
+        resumeFluids(c);
+        spawnPending(c);
         lastNeeded.put(key, tick);
         return c;
     }
 
+    /** Spawns a newly generated column's structure entities (villagers, animals) exactly once. */
+    private void spawnPending(Column4 c) {
+        var list = c.pendingEntities;
+        if (list == null) return;
+        c.pendingEntities = null;
+        for (Structures4.PendingEntity pe : list) {
+            String id = pe.tag().getStringOr("id", "");
+            var type = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getOptional(net.minecraft.resources.Identifier.tryParse(id));
+            if (type.isEmpty()) continue;
+            CompoundTag tag = pe.tag().copy();
+            tag.remove("Pos");
+            tag.remove("UUID");
+            net.minecraft.world.entity.Entity e = spawn(type.get(), pe.pos(), net.minecraft.world.entity.EntitySpawnReason.STRUCTURE, tag);
+            if (e instanceof net.minecraft.world.entity.Mob m) m.setPersistenceRequired();
+        }
+    }
+
+    private static boolean flowing(BlockState s) {
+        return s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock
+                && s.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) != 0;
+    }
+
+    /** Scheduled ticks are not saved, so flowing fluid in a freshly loaded column is re-scheduled to settle. */
+    private void resumeFluids(Column4 c) {
+        for (int sy = 0; sy < Column4.SECTIONS; sy++) {
+            Section4 sec = c.section(sy);
+            if (sec == null || sec.isEmpty() || !sec.paletteAny(ServerWorld4::flowing)) continue;
+            for (int i = 0; i < Section4.VOLUME; i++) {
+                if (!flowing(sec.get(i))) continue;
+                int lx = i & 15, lz = (i >> 4) & 15, ly = (i >> 8) & 15, lw = (i >> 12) & 15;
+                schedule(new BlockPos4((c.cx << 4) + lx, sy * 16 + ly, (c.cz << 4) + lz, (c.cw << 4) + lw), 5 + random.nextInt(10));
+            }
+        }
+    }
+
     private void request(long key) {
         if (level4.columns.containsKey(key) || loading.containsKey(key)) return;
-        if (loading.size() > 96) return;
+        if (loading.size() > 256) return;
         int cx = Column4.keyX(key), cz = Column4.keyZ(key), cw = Column4.keyW(key);
         loading.put(key, CompletableFuture.supplyAsync(() -> loadOrGenerate(cx, cz, cw), workers));
     }
@@ -298,7 +346,11 @@ public final class ServerWorld4 {
             it.remove();
             try {
                 Column4 c = e.getValue().join();
-                level4.columns.putIfAbsent(e.getKey(), c);
+                if (level4.columns.putIfAbsent(e.getKey(), c) == null) {
+                    loadBlockEntities(c);
+                    resumeFluids(c);
+                    spawnPending(c);
+                }
             } catch (Exception ex) {
                 Tetraform.LOGGER.error("4D column generation failed", ex);
             }
@@ -390,11 +442,88 @@ public final class ServerWorld4 {
         BlockState old = c.set(p.x() & 15, p.y(), p.z() & 15, p.w() & 15, state);
         if (old == state) return false;
         changedBlocks.add(p.asLong());
+        boolean keepEntity = old.getBlock() instanceof net.minecraft.world.level.block.CommandBlock
+                && state.getBlock() instanceof net.minecraft.world.level.block.CommandBlock;
+        if (old.getBlock() != state.getBlock() && !keepEntity) {
+            BlockEntities4.BE4 be = blockEntities.remove(p.asLong());
+            if (be instanceof BlockEntities4.Container4 ct) {
+                for (int i = 0; i < ct.inventory.getContainerSize(); i++) dropItem(p.center(), ct.inventory.getItem(i));
+            }
+            if (BlockEntities4.needsEntity(state)) attach(BlockEntities4.create(p, state), c);
+        }
         if (notify) {
             behaviors.onChanged(p, old, state);
             for (Direction4 d : Direction4.VALUES) behaviors.neighborChanged(p.relative(d), p);
         }
         return true;
+    }
+
+    public BlockEntities4.BE4 blockEntity(BlockPos4 p) {
+        return blockEntities.get(p.asLong());
+    }
+
+    /** The block entity at p, created on demand for blocks that need one (e.g. placed before this existed). */
+    public BlockEntities4.BE4 blockEntityOrCreate(BlockPos4 p) {
+        BlockEntities4.BE4 be = blockEntities.get(p.asLong());
+        if (be == null && BlockEntities4.needsEntity(getBlock(p))) {
+            Column4 c = level4.getColumnAt(p.x(), p.z(), p.w());
+            if (c != null) {
+                be = BlockEntities4.create(p, getBlock(p));
+                attach(be, c);
+            }
+        }
+        return be;
+    }
+
+    private void attach(BlockEntities4.BE4 be, Column4 c) {
+        if (be == null) return;
+        be.onChange = () -> c.setDirty(true);
+        blockEntities.put(be.pos.asLong(), be);
+        c.setDirty(true);
+    }
+
+    private Path entityFile(long key) {
+        return dir.resolve("c." + Column4.keyX(key) + "." + Column4.keyZ(key) + "." + Column4.keyW(key) + ".be");
+    }
+
+    private void loadBlockEntities(Column4 c) {
+        Path f = entityFile(c.key());
+        if (!Files.exists(f)) return;
+        try {
+            net.minecraft.nbt.CompoundTag root = net.minecraft.nbt.NbtIo.readCompressed(f, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+            net.minecraft.nbt.ListTag list = root.getListOrEmpty("entries");
+            for (int i = 0; i < list.size(); i++) {
+                net.minecraft.nbt.CompoundTag e = list.getCompoundOrEmpty(i);
+                BlockPos4 p = BlockPos4.of(e.getLongOr("pos", 0));
+                BlockEntities4.BE4 be = BlockEntities4.create(p, e.getStringOr("type", ""));
+                if (be == null) continue;
+                be.load(net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING,
+                        server.registryAccess(), e.getCompoundOrEmpty("data")));
+                be.onChange = () -> c.setDirty(true);
+                blockEntities.put(p.asLong(), be);
+            }
+        } catch (Exception ex) {
+            Tetraform.LOGGER.error("Failed to load 4D block entities {}", f, ex);
+        }
+    }
+
+    private net.minecraft.nbt.CompoundTag saveBlockEntities(Column4 c) {
+        net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+        int bx = c.cx, bz = c.cz, bw = c.cw;
+        for (BlockEntities4.BE4 be : blockEntities.values()) {
+            if (be.pos.x() >> 4 != bx || be.pos.z() >> 4 != bz || be.pos.w() >> 4 != bw) continue;
+            var out = net.minecraft.world.level.storage.TagValueOutput.createWithContext(net.minecraft.util.ProblemReporter.DISCARDING, server.registryAccess());
+            be.save(out);
+            net.minecraft.nbt.CompoundTag e = new net.minecraft.nbt.CompoundTag();
+            e.putLong("pos", be.pos.asLong());
+            e.putString("type", be.type());
+            e.put("data", out.buildResult());
+            list.add(e);
+        }
+        if (list.isEmpty()) return null;
+        net.minecraft.nbt.CompoundTag root = new net.minecraft.nbt.CompoundTag();
+        root.put("entries", list);
+        return root;
     }
 
     public void schedule(BlockPos4 p, int delay) {
@@ -403,8 +532,11 @@ public final class ServerWorld4 {
     }
 
     private void runScheduled() {
+        // At most 4096 ticks and ~15 ms per server tick; anything left over runs next tick, so a large fluid
+        // or redstone event slows down instead of stalling the server.
         int budget = 4096;
-        while (!scheduled.isEmpty() && scheduled.peek().at <= tick && budget-- > 0) {
+        long deadline = System.nanoTime() + 15_000_000L;
+        while (!scheduled.isEmpty() && scheduled.peek().at <= tick && budget-- > 0 && ((budget & 63) != 0 || System.nanoTime() < deadline)) {
             Scheduled s = scheduled.poll();
             scheduledKeys.remove(s.pos);
             BlockPos4 p = BlockPos4.of(s.pos);
@@ -433,33 +565,32 @@ public final class ServerWorld4 {
         }
     }
 
-    // ------------------------------------------------------------------ entities
+    // ------------------------------------------------------------------ entities (vanilla entities with a W)
 
-    public Entity4 addEntity(Entity4 e) {
-        entities.put(e.id, e);
-        return e;
-    }
-
-    public Collection<Entity4> entities() {
-        return entities.values();
-    }
-
-    public Entity4 entity(int id) {
-        return entities.get(id);
-    }
-
+    /** Drops an item as a vanilla item entity at a 4D position. */
     public void dropItem(Vec4 pos, ItemStack stack) {
         if (stack.isEmpty()) return;
-        Entity4 e = new Entity4(Entity4Type.ITEM, pos);
-        e.stack = stack.copy();
-        e.pickupDelay = 10;
-        double u = random.nextDouble() * 2 - 1, th = random.nextDouble() * Math.PI * 2, r = Math.sqrt(1 - u * u);
-        e.vel = new Vec4(r * Math.cos(th) * 0.1, 0.2, u * 0.1, r * Math.sin(th) * 0.1);
-        addEntity(e);
+        net.minecraft.world.entity.item.ItemEntity e = new net.minecraft.world.entity.item.ItemEntity(level, pos.x(), pos.y(), pos.z(), stack.copy());
+        W4.set(e, pos.w());
+        e.setDefaultPickUpDelay();
+        level.addFreshEntity(e);
+    }
+
+    /** Vanilla entities (not players) whose 4D box intersects {@code box}. */
+    public List<net.minecraft.world.entity.Entity> entitiesIn(AABB4 box) {
+        List<net.minecraft.world.entity.Entity> out = new ArrayList<>();
+        net.minecraft.world.phys.AABB a3 = new net.minecraft.world.phys.AABB(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ());
+        for (net.minecraft.world.entity.Entity e : level.getEntities((net.minecraft.world.entity.Entity) null, a3, x -> true)) {
+            double w = W4.get(e), hw = e.getBbWidth() / 2;
+            if (w + hw > box.minW() && w - hw < box.maxW()) out.add(e);
+        }
+        return out;
     }
 
     public boolean anyEntityIn(AABB4 box) {
-        for (Entity4 e : entities.values()) if (e.type != Entity4Type.ITEM && e.box().intersects(box)) return true;
+        for (net.minecraft.world.entity.Entity e : entitiesIn(box)) {
+            if (e instanceof net.minecraft.world.entity.LivingEntity && !e.isSpectator()) return true;
+        }
         for (ServerPlayer p : level.players()) {
             if (p.isSpectator()) continue;
             if (AABB4.ofCenterBottom(state(p).pos, 0.3, 1.8).intersects(box)) return true;
@@ -467,67 +598,112 @@ public final class ServerWorld4 {
         return false;
     }
 
-    private void tickEntities() {
-        Iterator<Entity4> it = entities.values().iterator();
-        while (it.hasNext()) {
-            Entity4 e = it.next();
-            if (e.removed) { it.remove(); continue; }
-            e.tick(this);
-            if (e.removed) it.remove();
-        }
-    }
+    private static final net.minecraft.world.entity.EntityType<?>[] DAY = {
+            net.minecraft.world.entity.EntityTypes.COW, net.minecraft.world.entity.EntityTypes.PIG,
+            net.minecraft.world.entity.EntityTypes.SHEEP, net.minecraft.world.entity.EntityTypes.CHICKEN};
+    private static final net.minecraft.world.entity.EntityType<?>[] NIGHT = {
+            net.minecraft.world.entity.EntityTypes.ZOMBIE, net.minecraft.world.entity.EntityTypes.SKELETON,
+            net.minecraft.world.entity.EntityTypes.CREEPER, net.minecraft.world.entity.EntityTypes.SPIDER};
 
+    /**
+     * Natural spawning of vanilla mobs at 4D positions (vanilla spawning can't see the 4D terrain): animals by
+     * day on grass, monsters at night. Each mob gets its own W and then lives in that slice.
+     */
     private void spawnMobs() {
         if (!Config4.SPAWN_MOBS.get() || tick % 40 != 0) return;
+        if (!level.getGameRules().get(net.minecraft.world.level.gamerules.GameRules.SPAWN_MOBS)) return;
         int cap = Config4.MOB_CAP.get();
         for (ServerPlayer p : level.players()) {
             Vec4 pp = state(p).pos;
             int near = 0;
-            for (Entity4 e : entities.values()) if (e.type != Entity4Type.ITEM && e.pos.distanceSqr(pp) < 64 * 64) near++;
+            for (net.minecraft.world.entity.Entity e : level.getEntities((net.minecraft.world.entity.Entity) null, p.getBoundingBox().inflate(64), x -> x instanceof net.minecraft.world.entity.Mob)) {
+                if (Math.abs(W4.get(e) - pp.w()) < 64) near++;
+            }
             if (near >= cap) continue;
             double u = random.nextDouble() * 2 - 1, th = random.nextDouble() * Math.PI * 2, r = Math.sqrt(1 - u * u);
-            double dist = 14 + random.nextDouble() * 22;
+            double dist = 16 + random.nextDouble() * 24;
             double x = pp.x() + r * Math.cos(th) * dist, z = pp.z() + u * dist, w = pp.w() + r * Math.sin(th) * dist;
             int bx = (int) Math.floor(x), bz = (int) Math.floor(z), bw = (int) Math.floor(w);
             if (!level4.isLoaded(bx, bz, bw)) continue;
             int y = level4.heightAt(bx, bz, bw);
             BlockState ground = level4.getBlock(bx, y - 1, bz, bw);
-            if (y <= 1 || !ground.getFluidState().isEmpty() || !level4.getBlock(bx, y, bz, bw).isAir()) continue;
+            if (y <= 1 || !ground.getFluidState().isEmpty() || !level4.getBlock(bx, y, bz, bw).isAir()
+                    || !level4.getBlock(bx, y + 1, bz, bw).isAir()) continue;
             boolean night = level.isDarkOutside();
-            Entity4Type type = (night && random.nextFloat() < 0.7f) || random.nextFloat() < 0.12f ? Entity4Type.STALKER : Entity4Type.HYPERHOG;
-            Entity4 e = new Entity4(type, new Vec4(bx + 0.5, y, bz + 0.5, bw + 0.5));
-            e.frame.turnForwardTowards(random.nextDouble() - 0.5, random.nextDouble() - 0.5, random.nextDouble() - 0.5, Math.PI);
-            addEntity(e);
+            if (!night && !ground.is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK)) continue;
+            net.minecraft.world.entity.EntityType<?>[] pool = night ? NIGHT : DAY;
+            net.minecraft.world.entity.EntityType<?> type = pool[random.nextInt(pool.length)];
+            spawn(type, new Vec4(bx + 0.5, y, bz + 0.5, bw + 0.5), net.minecraft.world.entity.EntitySpawnReason.NATURAL);
         }
     }
 
-    private void sendEntities() {
-        List<ServerPlayer> players = level.players();
-        for (ServerPlayer p : players) {
-            Vec4 pp = state(p).pos;
-            List<Net4.EntityView> views = new ArrayList<>();
-            for (Entity4 e : entities.values()) {
-                if (e.pos.distanceSqr(pp) > 80 * 80) continue;
-                int extra = e.type == Entity4Type.ITEM ? BuiltInRegistries.ITEM.getId(e.stack.getItem()) : 0;
-                views.add(view(e.id, e.type, e.pos, e.frame, extra, e.hurtTime));
-            }
-            for (ServerPlayer o : players) {
-                if (o == p || o.isSpectator()) continue;
-                PlayerState4 os = state(o);
-                if (os.pos.distanceSqr(pp) > 80 * 80) continue;
-                SliceFrame facing = os.frame.copy();
-                facing.rotateInSlice(Math.toRadians(o.getYRot()));
-                views.add(view(o.getId(), Entity4Type.PLAYER, os.pos, facing, 0, o.hurtTime));
-            }
-            PacketDistributor.sendToPlayer(p, new Net4.EntitiesS2C(views.toArray(new Net4.EntityView[0])));
-        }
+    /** Creates a vanilla entity at a 4D position; mob spawn logic runs inside that entity's slice. */
+    public net.minecraft.world.entity.Entity spawn(net.minecraft.world.entity.EntityType<?> type, Vec4 pos, net.minecraft.world.entity.EntitySpawnReason reason) {
+        return spawn(type, pos, reason, null);
     }
 
-    private static Net4.EntityView view(int id, Entity4Type t, Vec4 pos, SliceFrame f, int extra, int hurt) {
-        float[] fr = new float[9];
-        double[] v = f.values();
-        for (int i = 0; i < 9; i++) fr[i] = (float) v[i];
-        return new Net4.EntityView(id, (byte) t.ordinal(), (float) pos.x(), (float) pos.y(), (float) pos.z(), (float) pos.w(), fr, extra, (byte) hurt);
+    public net.minecraft.world.entity.Entity spawn(net.minecraft.world.entity.EntityType<?> type, Vec4 pos, net.minecraft.world.entity.EntitySpawnReason reason,
+                                                   net.minecraft.nbt.CompoundTag nbt) {
+        net.minecraft.world.entity.Entity e = type.create(level, reason);
+        if (e == null) return null;
+        if (nbt != null && !nbt.isEmpty()) {
+            try (var reporter = new net.minecraft.util.ProblemReporter.ScopedCollector(org.slf4j.LoggerFactory.getLogger("tetraform"))) {
+                e.load(net.minecraft.world.level.storage.TagValueInput.create(reporter, level.registryAccess(), nbt));
+            }
+        }
+        e.snapTo(pos.x(), pos.y(), pos.z(), random.nextFloat() * 360f, 0f);
+        W4.set(e, pos.w());
+        Access4.Mapper prev = Access4.push(Access4.server(this, pos.w()));
+        try {
+            if (e instanceof net.minecraft.world.entity.Mob mob) {
+                mob.finalizeSpawn(level, level.getCurrentDifficultyAt(e.blockPosition()), reason, null);
+            }
+            level.addFreshEntity(e);
+        } finally {
+            Access4.pop(prev);
+        }
+        return e;
+    }
+
+    // ------------------------------------------------------------------ creatures moving through W
+
+    private final Map<net.minecraft.world.entity.Entity, Double> wTargets = new WeakHashMap<>();
+
+    /**
+     * Gives every vanilla mob a fourth degree of freedom: now and then a mob steps to a neighbouring W layer when
+     * there is room there (feet and head clear, ground below), and a mob with a target lines its W up with it.
+     */
+    public void tickMobW(net.minecraft.world.entity.Mob mob) {
+        if (mob.isNoAi() || mob.isPassenger()) return;
+        double w = W4.get(mob);
+        Double target = wTargets.get(mob);
+        net.minecraft.world.entity.LivingEntity t = mob.getTarget();
+        if (t != null && Math.abs(W4.get(t) - w) > 0.02) target = W4.get(t);
+        // villagers and golems stay with their village's layer; other creatures drift through W now and then
+        boolean homebody = mob instanceof net.minecraft.world.entity.npc.villager.AbstractVillager || mob instanceof net.minecraft.world.entity.animal.golem.IronGolem;
+        if (target == null && !homebody && mob.getNavigation().isDone() && random.nextInt(1200) == 0) {
+            double nw = Math.floor(w) + 0.5 + (random.nextBoolean() ? 1 : -1);
+            if (roomAt(mob, nw)) target = nw;
+        }
+        if (target == null) return;
+        double step = Math.max(-0.1, Math.min(0.1, target - w));
+        double nw = w + step;
+        if (!roomAt(mob, nw)) {
+            wTargets.remove(mob);
+            return;
+        }
+        W4.set(mob, Math.abs(target - nw) < 1.0E-3 ? target : nw);
+        if (Math.abs(target - nw) < 1.0E-3) wTargets.remove(mob);
+        else wTargets.put(mob, target);
+    }
+
+    private boolean roomAt(net.minecraft.world.entity.Entity e, double w) {
+        AABB4 box = new AABB4(e.getBoundingBox().minX, e.getBoundingBox().minY, e.getBoundingBox().minZ, w - e.getBbWidth() / 2,
+                e.getBoundingBox().maxX, e.getBoundingBox().maxY, e.getBoundingBox().maxZ, w + e.getBbWidth() / 2);
+        if (!level4.collisions(box.inflate(-0.01)).isEmpty()) return false;
+        // something to stand on in the new layer
+        BlockPos4 below = new Vec4(e.getX(), e.getY() - 0.5, e.getZ(), w).toBlockPos();
+        return !e.onGround() || BlockShapes4.collision(level4.getBlock(below)) != null;
     }
 
     public void explodeAt(Vec4 pos, float power) {
@@ -535,6 +711,37 @@ public final class ServerWorld4 {
     }
 
     // ------------------------------------------------------------------ actions
+
+    /** Saves edits from the command block screen (mode switches swap the block type but keep the command). */
+    public static void handleSetCommandBlock(ServerPlayer p, Net4.SetCommandBlock4C2S m) {
+        ServerWorld4 w = get(p.level());
+        if (w == null || !p.canUseGameMasterBlocks()) return;
+        BlockPos4 pos = BlockPos4.of(m.pos());
+        if (state(p).pos.distance(pos.center()) > 10) return;
+        BlockState old = w.getBlock(pos);
+        if (!(old.getBlock() instanceof net.minecraft.world.level.block.CommandBlock)) return;
+        var modes = net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.values();
+        var mode = modes[Math.floorMod(m.mode(), modes.length)];
+        net.minecraft.world.level.block.Block nb = switch (mode) {
+            case SEQUENCE -> net.minecraft.world.level.block.Blocks.CHAIN_COMMAND_BLOCK;
+            case AUTO -> net.minecraft.world.level.block.Blocks.REPEATING_COMMAND_BLOCK;
+            case REDSTONE -> net.minecraft.world.level.block.Blocks.COMMAND_BLOCK;
+        };
+        BlockState ns = nb.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.CommandBlock.FACING, old.getValue(net.minecraft.world.level.block.CommandBlock.FACING))
+                .setValue(net.minecraft.world.level.block.CommandBlock.CONDITIONAL, m.conditional());
+        if (!(w.blockEntityOrCreate(pos) instanceof BlockEntities4.CommandBlock4 cb)) return;
+        w.setBlock(pos, ns, false);
+        cb.commandBlock.setCommand(m.command());
+        cb.commandBlock.setTrackOutput(m.trackOutput());
+        if (!m.trackOutput()) cb.commandBlock.setLastOutput(null);
+        cb.auto = m.auto();
+        cb.markChanged();
+        if (mode != net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.SEQUENCE && (cb.auto || cb.powered)) w.schedule(pos, 1);
+        if (!m.command().isEmpty()) {
+            p.sendSystemMessage(net.minecraft.network.chat.Component.translatable("advMode.setCommand.success", m.command()));
+        }
+    }
 
     public static void handleAction(ServerPlayer p, Net4.Action4C2S a) {
         ServerWorld4 w = get(p.level());
@@ -551,10 +758,8 @@ public final class ServerWorld4 {
             updateTracker(p, t);
         }
         runScheduled();
-        tickEntities();
         spawnMobs();
         flushBlockUpdates();
-        sendEntities();
         if (tick % 200 == 0) unloadStale();
     }
 
@@ -565,6 +770,8 @@ public final class ServerWorld4 {
             Long last = lastNeeded.get(e.getKey());
             if (last != null && tick - last < 600) continue;
             saveColumn(e.getValue(), false);
+            Column4 uc = e.getValue();
+            blockEntities.values().removeIf(be -> be.pos.x() >> 4 == uc.cx && be.pos.z() >> 4 == uc.cz && be.pos.w() >> 4 == uc.cw);
             it.remove();
             lastNeeded.remove(e.getKey());
         }
@@ -575,8 +782,12 @@ public final class ServerWorld4 {
         c.setDirty(false);
         byte[] data = c.toBytes();
         Path f = columnFile(c.key());
+        net.minecraft.nbt.CompoundTag bes = saveBlockEntities(c);
+        Path bf = entityFile(c.key());
         Runnable write = () -> {
             try {
+                if (bes != null) net.minecraft.nbt.NbtIo.writeCompressed(bes, bf);
+                else Files.deleteIfExists(bf);
                 Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
                 Files.write(tmp, data);
                 Files.move(tmp, f, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);

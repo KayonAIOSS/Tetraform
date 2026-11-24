@@ -6,7 +6,10 @@
   "key.tetraform.w_rotation_modifier": "Rotate into W (hold + scroll)",
   "key.tetraform.smooth_turn_ana": "Smooth rotate toward +W",
   "key.tetraform.smooth_turn_kata": "Smooth rotate toward -W",
-  "key.tetraform.reset_w_rotation": "Reset W rotation",
   "key.tetraform.strafe_ana": "Strafe ana (+W')",
-  "key.tetraform.strafe_kata": "Strafe kata (-W')"
+  "key.tetraform.strafe_kata": "Strafe kata (-W')",
+  "key.tetraform.snap_zw_270": "Snap W rotation to 270° (left)",
+  "key.tetraform.snap_zw_0": "Snap W rotation to 0° (forward)",
+  "key.tetraform.snap_zw_90": "Snap W rotation to 90° (right)",
+  "key.tetraform.snap_zw_180": "Snap W rotation to 180° (backward)"
 }

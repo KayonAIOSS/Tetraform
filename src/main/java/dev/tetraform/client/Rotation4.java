@@ -17,7 +17,10 @@ public final class Rotation4 {
     public static final double SMOOTH_DEG_PER_TICK = 3.0;
 
     public static void tick(LocalPlayer player) {
-        if (Keys4.RESET_SLICE.consumeClick()) ClientState4.setZW(0);
+        if (Keys4.SNAP_270.consumeClick()) ClientState4.setZW(Math.toRadians(270));
+        if (Keys4.SNAP_0.consumeClick()) ClientState4.setZW(0);
+        if (Keys4.SNAP_90.consumeClick()) ClientState4.setZW(Math.toRadians(90));
+        if (Keys4.SNAP_180.consumeClick()) ClientState4.setZW(Math.toRadians(180));
         int dir = (Keys4.ROTATE_ANA.isDown() ? 1 : 0) - (Keys4.ROTATE_KATA.isDown() ? 1 : 0);
         if (dir != 0) ClientState4.setZW(ClientState4.zw + Math.toRadians(SMOOTH_DEG_PER_TICK * dir));
     }

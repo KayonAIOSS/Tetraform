@@ -18,6 +18,7 @@ public final class SliceManager {
     private static long dirtyMinX = Long.MAX_VALUE, dirtyMinZ, dirtyMaxX, dirtyMaxZ;
     private static boolean dirtyAll;
 
+
     /** Depth used for meshing. Axis-aligned slices only change when crossing a whole block. */
     public static double quantizeDepth(SliceFrame f, double depth) {
         if (f.isAxisAligned()) return Math.floor(depth) + 0.5;
@@ -37,8 +38,11 @@ public final class SliceManager {
                 // keep the player's render-space position fixed so rotating never moves the camera
                 offX = m.renderX(p.x(), p.z(), p.w()) - f.localX(p.x(), p.z(), p.w());
                 offZ = m.renderZ(p.x(), p.z(), p.w()) - f.localZ(p.x(), p.z(), p.w());
+                // back at zw = 0, render space is world space again (vanilla systems line up exactly)
+                if (Math.abs(f.zwAngle()) < 1.0E-9) { offX = 0; offZ = 0; }
             }
             ClientState4.mesh = new ClientState4.MeshParams(f.copy(), depth, offX, offZ, m.version() + 1);
+            // Everything in view is rebuilt at once; vanilla/Sodium build the closest sections first.
             dirtyAll = true;
         }
         flush();
@@ -102,10 +106,11 @@ public final class SliceManager {
         int ymax = (Column4.HEIGHT >> 4) - 1;
         int rd = Minecraft.getInstance().options.getEffectiveRenderDistance() + 1;
         int sx = player.blockPosition().getX() >> 4, sz = player.blockPosition().getZ() >> 4;
+        int contentTop = Math.min(ymax, (ClientState4.LEVEL.maxY() >> 4));
         if (dirtyAll) {
             dirtyAll = false;
             dirtyMinX = Long.MAX_VALUE;
-            level.setSectionRangeDirty(sx - rd, 0, sz - rd, sx + rd, ymax, sz + rd);
+            level.setSectionRangeDirty(sx - rd, 0, sz - rd, sx + rd, contentTop, sz + rd);
             return;
         }
         if (dirtyMinX != Long.MAX_VALUE) {

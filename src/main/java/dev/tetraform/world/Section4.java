@@ -65,6 +65,13 @@ public final class Section4 {
     }
 
     public boolean isEmpty() { return nonAir == 0; }
+
+    /** Cheap palette check: could any block in this section match? */
+    public boolean paletteAny(java.util.function.Predicate<BlockState> test) {
+        Storage st = storage;
+        for (int i = 0; i < st.paletteSize; i++) if (test.test(st.palette[i])) return true;
+        return false;
+    }
     public boolean isFullyOpaque() { return opaque == VOLUME; }
     public int emitterCount() { return emitters; }
     public boolean isUniform() { return storage.bits == 0; }

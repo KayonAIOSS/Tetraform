@@ -55,47 +55,6 @@ public final class Net4 {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    /** One visible 4D entity in a snapshot. Frame = 9 floats (orientation in x,z,w). */
-    public record EntityView(int id, byte type, float x, float y, float z, float w, float[] frame, int extra, byte hurt) {
-        static void write(ByteBuf buf, EntityView v) {
-            buf.writeInt(v.id);
-            buf.writeByte(v.type);
-            buf.writeFloat(v.x);
-            buf.writeFloat(v.y);
-            buf.writeFloat(v.z);
-            buf.writeFloat(v.w);
-            for (int i = 0; i < 9; i++) buf.writeFloat(v.frame[i]);
-            buf.writeInt(v.extra);
-            buf.writeByte(v.hurt);
-        }
-
-        static EntityView read(ByteBuf buf) {
-            int id = buf.readInt();
-            byte t = buf.readByte();
-            float x = buf.readFloat(), y = buf.readFloat(), z = buf.readFloat(), w = buf.readFloat();
-            float[] f = new float[9];
-            for (int i = 0; i < 9; i++) f[i] = buf.readFloat();
-            return new EntityView(id, t, x, y, z, w, f, buf.readInt(), buf.readByte());
-        }
-    }
-
-    /** Per-tick snapshot of the 4D entities (mobs, items and other players) near the receiving player. */
-    public record EntitiesS2C(EntityView[] entities) implements CustomPacketPayload {
-        public static final Type<EntitiesS2C> TYPE = typeOf("entities");
-        public static final StreamCodec<RegistryFriendlyByteBuf, EntitiesS2C> CODEC = StreamCodec.of(
-                (buf, v) -> {
-                    buf.writeVarInt(v.entities.length);
-                    for (EntityView e : v.entities) EntityView.write(buf, e);
-                },
-                buf -> {
-                    int n = Math.min(buf.readVarInt(), 4096);
-                    EntityView[] a = new EntityView[n];
-                    for (int i = 0; i < n; i++) a[i] = EntityView.read(buf);
-                    return new EntitiesS2C(a);
-                });
-        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
-    }
-
     /** Authoritative 4D position (and optionally frame) from the server: teleports, respawn, entering. */
     public record Teleport4S2C(double x, double y, double z, double w, double[] frame, boolean reset) implements CustomPacketPayload {
         public static final Type<Teleport4S2C> TYPE = typeOf("teleport4");
@@ -123,7 +82,30 @@ public final class Net4 {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /** Opens the vanilla command block screen for a 4D command block. */
+    public record OpenCommandBlock4S2C(long pos, int state, String command, boolean trackOutput, String lastOutput, boolean auto) implements CustomPacketPayload {
+        public static final Type<OpenCommandBlock4S2C> TYPE = typeOf("open_command_block");
+        public static final StreamCodec<RegistryFriendlyByteBuf, OpenCommandBlock4S2C> CODEC = StreamCodec.of(
+                (buf, v) -> {
+                    buf.writeLong(v.pos); buf.writeVarInt(v.state); buf.writeUtf(v.command, 32767);
+                    buf.writeBoolean(v.trackOutput); buf.writeUtf(v.lastOutput, 32767); buf.writeBoolean(v.auto);
+                },
+                buf -> new OpenCommandBlock4S2C(buf.readLong(), buf.readVarInt(), buf.readUtf(32767), buf.readBoolean(), buf.readUtf(32767), buf.readBoolean()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     // ---------------------------------------------------------------- server-bound
+
+    public record SetCommandBlock4C2S(long pos, String command, int mode, boolean trackOutput, boolean conditional, boolean auto) implements CustomPacketPayload {
+        public static final Type<SetCommandBlock4C2S> TYPE = typeOf("set_command_block");
+        public static final StreamCodec<RegistryFriendlyByteBuf, SetCommandBlock4C2S> CODEC = StreamCodec.of(
+                (buf, v) -> {
+                    buf.writeLong(v.pos); buf.writeUtf(v.command, 32767); buf.writeVarInt(v.mode);
+                    buf.writeBoolean(v.trackOutput); buf.writeBoolean(v.conditional); buf.writeBoolean(v.auto);
+                },
+                buf -> new SetCommandBlock4C2S(buf.readLong(), buf.readUtf(32767), buf.readVarInt(), buf.readBoolean(), buf.readBoolean(), buf.readBoolean()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
 
     public record Move4C2S(double x, double y, double z, double w, double[] frame, boolean onGround) implements CustomPacketPayload {
         public static final Type<Move4C2S> TYPE = typeOf("move4");
@@ -142,7 +124,7 @@ public final class Net4 {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public static final byte ACTION_BREAK = 0, ACTION_PLACE = 1, ACTION_USE = 2, ACTION_ATTACK = 3, ACTION_PICK = 4;
+    public static final byte ACTION_BREAK = 0, ACTION_PLACE = 1, ACTION_USE = 2, ACTION_ATTACK = 3, ACTION_PICK = 4, ACTION_USE_ENTITY = 5;
 
     public record Action4C2S(byte action, int x, int y, int z, int w, byte face, int entityId) implements CustomPacketPayload {
         public static final Type<Action4C2S> TYPE = typeOf("action4");
@@ -177,9 +159,12 @@ public final class Net4 {
         r.playToClient(ColumnS2C.TYPE, ColumnS2C.CODEC);
         r.playToClient(UnloadColumnsS2C.TYPE, UnloadColumnsS2C.CODEC);
         r.playToClient(BlockUpdatesS2C.TYPE, BlockUpdatesS2C.CODEC);
-        r.playToClient(EntitiesS2C.TYPE, EntitiesS2C.CODEC);
         r.playToClient(Teleport4S2C.TYPE, Teleport4S2C.CODEC);
         r.playToClient(Impulse4S2C.TYPE, Impulse4S2C.CODEC);
+        r.playToClient(OpenCommandBlock4S2C.TYPE, OpenCommandBlock4S2C.CODEC);
+        r.playToServer(SetCommandBlock4C2S.TYPE, SetCommandBlock4C2S.CODEC, (p, ctx) -> {
+            if (ctx.player() instanceof ServerPlayer sp) ServerWorld4.handleSetCommandBlock(sp, p);
+        });
         r.playToServer(Move4C2S.TYPE, Move4C2S.CODEC, (p, ctx) -> {
             if (ctx.player() instanceof ServerPlayer sp) ServerWorld4.handleMove(sp, p);
         });

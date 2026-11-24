@@ -56,6 +56,20 @@ public final class Debug4 {
         lines.add(String.format(Locale.ROOT, "Slice: zw %.1f° normal (%.3f, %.3f, %.3f, %.3f) depth %.3f",
                 Math.toDegrees(ClientState4.zw), n.x() + 0.0, n.y() + 0.0, n.z() + 0.0, n.w() + 0.0, ClientState4.FRAME.depthOf(p) + 0.0));
         lines.add(mc.level.dimension().identifier() + " (4D) Columns: " + ClientState4.LEVEL.columns().size());
+        lines.add(String.format(Locale.ROOT, "Mesh cache: %d sections, %.1f MB", dev.tetraform.client.render.MeshCache.size(),
+                dev.tetraform.client.render.MeshCache.usedBytes() / 1048576.0));
+        int total = 0, inSlice = 0;
+        net.minecraft.world.entity.Entity near = null;
+        double nd = Double.MAX_VALUE;
+        for (var e : mc.level.entitiesForRendering()) {
+            if (e == mc.player) continue;
+            total++;
+            if (Boolean.TRUE.equals(EntityView4.visible(e, 1f))) inSlice++;
+            double dd = e.distanceToSqr(p.x(), p.y(), p.z());
+            if (dd < nd) { nd = dd; near = e; }
+        }
+        lines.add("Entities: " + inSlice + " in slice / " + total + (near == null ? "" : String.format(Locale.ROOT,
+                ", nearest %s at %.1f %.1f %.1f w %.2f", near.getType().toShortString(), near.getX(), near.getY(), near.getZ(), dev.tetraform.world.W4.get(near))));
         d.addToGroup(DebugEntryPosition.GROUP, lines);
     }
 

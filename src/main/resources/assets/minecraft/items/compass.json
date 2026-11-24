@@ -1,0 +1,979 @@
+{
+ "model": {
+  "type": "minecraft:condition",
+  "property": "minecraft:has_component",
+  "component": "minecraft:lodestone_tracker",
+  "on_true": {
+   "type": "minecraft:composite",
+   "models": [
+    {
+     "type": "minecraft:model",
+     "model": "tetraform:item/compass_body"
+    },
+    {
+     "type": "minecraft:range_dispatch",
+     "property": "tetraform:needle",
+     "scale": 32.0,
+     "entries": [
+      {
+       "threshold": 0.0,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_00"
+       }
+      },
+      {
+       "threshold": 0.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_01"
+       }
+      },
+      {
+       "threshold": 1.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_02"
+       }
+      },
+      {
+       "threshold": 2.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_03"
+       }
+      },
+      {
+       "threshold": 3.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_04"
+       }
+      },
+      {
+       "threshold": 4.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_05"
+       }
+      },
+      {
+       "threshold": 5.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_06"
+       }
+      },
+      {
+       "threshold": 6.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_07"
+       }
+      },
+      {
+       "threshold": 7.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_08"
+       }
+      },
+      {
+       "threshold": 8.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_09"
+       }
+      },
+      {
+       "threshold": 9.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_10"
+       }
+      },
+      {
+       "threshold": 10.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_11"
+       }
+      },
+      {
+       "threshold": 11.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_12"
+       }
+      },
+      {
+       "threshold": 12.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_13"
+       }
+      },
+      {
+       "threshold": 13.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_14"
+       }
+      },
+      {
+       "threshold": 14.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_15"
+       }
+      },
+      {
+       "threshold": 15.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_16"
+       }
+      },
+      {
+       "threshold": 16.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_17"
+       }
+      },
+      {
+       "threshold": 17.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_18"
+       }
+      },
+      {
+       "threshold": 18.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_19"
+       }
+      },
+      {
+       "threshold": 19.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_20"
+       }
+      },
+      {
+       "threshold": 20.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_21"
+       }
+      },
+      {
+       "threshold": 21.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_22"
+       }
+      },
+      {
+       "threshold": 22.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_23"
+       }
+      },
+      {
+       "threshold": 23.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_24"
+       }
+      },
+      {
+       "threshold": 24.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_25"
+       }
+      },
+      {
+       "threshold": 25.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_26"
+       }
+      },
+      {
+       "threshold": 26.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_27"
+       }
+      },
+      {
+       "threshold": 27.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_28"
+       }
+      },
+      {
+       "threshold": 28.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_29"
+       }
+      },
+      {
+       "threshold": 29.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_30"
+       }
+      },
+      {
+       "threshold": 30.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_31"
+       }
+      },
+      {
+       "threshold": 31.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_00"
+       }
+      }
+     ],
+     "target": "lodestone"
+    },
+    {
+     "type": "minecraft:range_dispatch",
+     "property": "tetraform:zw",
+     "scale": 32.0,
+     "entries": [
+      {
+       "threshold": 0.0,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_00"
+       }
+      },
+      {
+       "threshold": 0.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_01"
+       }
+      },
+      {
+       "threshold": 1.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_02"
+       }
+      },
+      {
+       "threshold": 2.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_03"
+       }
+      },
+      {
+       "threshold": 3.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_04"
+       }
+      },
+      {
+       "threshold": 4.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_05"
+       }
+      },
+      {
+       "threshold": 5.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_06"
+       }
+      },
+      {
+       "threshold": 6.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_07"
+       }
+      },
+      {
+       "threshold": 7.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_08"
+       }
+      },
+      {
+       "threshold": 8.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_09"
+       }
+      },
+      {
+       "threshold": 9.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_10"
+       }
+      },
+      {
+       "threshold": 10.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_11"
+       }
+      },
+      {
+       "threshold": 11.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_12"
+       }
+      },
+      {
+       "threshold": 12.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_13"
+       }
+      },
+      {
+       "threshold": 13.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_14"
+       }
+      },
+      {
+       "threshold": 14.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_15"
+       }
+      },
+      {
+       "threshold": 15.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_16"
+       }
+      },
+      {
+       "threshold": 16.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_17"
+       }
+      },
+      {
+       "threshold": 17.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_18"
+       }
+      },
+      {
+       "threshold": 18.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_19"
+       }
+      },
+      {
+       "threshold": 19.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_20"
+       }
+      },
+      {
+       "threshold": 20.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_21"
+       }
+      },
+      {
+       "threshold": 21.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_22"
+       }
+      },
+      {
+       "threshold": 22.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_23"
+       }
+      },
+      {
+       "threshold": 23.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_24"
+       }
+      },
+      {
+       "threshold": 24.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_25"
+       }
+      },
+      {
+       "threshold": 25.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_26"
+       }
+      },
+      {
+       "threshold": 26.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_27"
+       }
+      },
+      {
+       "threshold": 27.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_28"
+       }
+      },
+      {
+       "threshold": 28.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_29"
+       }
+      },
+      {
+       "threshold": 29.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_30"
+       }
+      },
+      {
+       "threshold": 30.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_31"
+       }
+      },
+      {
+       "threshold": 31.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_00"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "on_false": {
+   "type": "minecraft:composite",
+   "models": [
+    {
+     "type": "minecraft:model",
+     "model": "tetraform:item/compass_body"
+    },
+    {
+     "type": "minecraft:range_dispatch",
+     "property": "tetraform:needle",
+     "scale": 32.0,
+     "entries": [
+      {
+       "threshold": 0.0,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_00"
+       }
+      },
+      {
+       "threshold": 0.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_01"
+       }
+      },
+      {
+       "threshold": 1.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_02"
+       }
+      },
+      {
+       "threshold": 2.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_03"
+       }
+      },
+      {
+       "threshold": 3.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_04"
+       }
+      },
+      {
+       "threshold": 4.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_05"
+       }
+      },
+      {
+       "threshold": 5.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_06"
+       }
+      },
+      {
+       "threshold": 6.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_07"
+       }
+      },
+      {
+       "threshold": 7.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_08"
+       }
+      },
+      {
+       "threshold": 8.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_09"
+       }
+      },
+      {
+       "threshold": 9.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_10"
+       }
+      },
+      {
+       "threshold": 10.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_11"
+       }
+      },
+      {
+       "threshold": 11.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_12"
+       }
+      },
+      {
+       "threshold": 12.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_13"
+       }
+      },
+      {
+       "threshold": 13.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_14"
+       }
+      },
+      {
+       "threshold": 14.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_15"
+       }
+      },
+      {
+       "threshold": 15.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_16"
+       }
+      },
+      {
+       "threshold": 16.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_17"
+       }
+      },
+      {
+       "threshold": 17.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_18"
+       }
+      },
+      {
+       "threshold": 18.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_19"
+       }
+      },
+      {
+       "threshold": 19.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_20"
+       }
+      },
+      {
+       "threshold": 20.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_21"
+       }
+      },
+      {
+       "threshold": 21.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_22"
+       }
+      },
+      {
+       "threshold": 22.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_23"
+       }
+      },
+      {
+       "threshold": 23.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_24"
+       }
+      },
+      {
+       "threshold": 24.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_25"
+       }
+      },
+      {
+       "threshold": 25.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_26"
+       }
+      },
+      {
+       "threshold": 26.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_27"
+       }
+      },
+      {
+       "threshold": 27.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_28"
+       }
+      },
+      {
+       "threshold": 28.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_29"
+       }
+      },
+      {
+       "threshold": 29.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_30"
+       }
+      },
+      {
+       "threshold": 30.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_31"
+       }
+      },
+      {
+       "threshold": 31.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_blue_00"
+       }
+      }
+     ],
+     "target": "spawn"
+    },
+    {
+     "type": "minecraft:range_dispatch",
+     "property": "tetraform:zw",
+     "scale": 32.0,
+     "entries": [
+      {
+       "threshold": 0.0,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_00"
+       }
+      },
+      {
+       "threshold": 0.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_01"
+       }
+      },
+      {
+       "threshold": 1.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_02"
+       }
+      },
+      {
+       "threshold": 2.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_03"
+       }
+      },
+      {
+       "threshold": 3.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_04"
+       }
+      },
+      {
+       "threshold": 4.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_05"
+       }
+      },
+      {
+       "threshold": 5.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_06"
+       }
+      },
+      {
+       "threshold": 6.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_07"
+       }
+      },
+      {
+       "threshold": 7.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_08"
+       }
+      },
+      {
+       "threshold": 8.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_09"
+       }
+      },
+      {
+       "threshold": 9.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_10"
+       }
+      },
+      {
+       "threshold": 10.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_11"
+       }
+      },
+      {
+       "threshold": 11.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_12"
+       }
+      },
+      {
+       "threshold": 12.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_13"
+       }
+      },
+      {
+       "threshold": 13.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_14"
+       }
+      },
+      {
+       "threshold": 14.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_15"
+       }
+      },
+      {
+       "threshold": 15.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_16"
+       }
+      },
+      {
+       "threshold": 16.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_17"
+       }
+      },
+      {
+       "threshold": 17.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_18"
+       }
+      },
+      {
+       "threshold": 18.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_19"
+       }
+      },
+      {
+       "threshold": 19.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_20"
+       }
+      },
+      {
+       "threshold": 20.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_21"
+       }
+      },
+      {
+       "threshold": 21.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_22"
+       }
+      },
+      {
+       "threshold": 22.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_23"
+       }
+      },
+      {
+       "threshold": 23.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_24"
+       }
+      },
+      {
+       "threshold": 24.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_25"
+       }
+      },
+      {
+       "threshold": 25.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_26"
+       }
+      },
+      {
+       "threshold": 26.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_27"
+       }
+      },
+      {
+       "threshold": 27.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_28"
+       }
+      },
+      {
+       "threshold": 28.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_29"
+       }
+      },
+      {
+       "threshold": 29.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_30"
+       }
+      },
+      {
+       "threshold": 30.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_31"
+       }
+      },
+      {
+       "threshold": 31.5,
+       "model": {
+        "type": "minecraft:model",
+        "model": "tetraform:item/compass_red_00"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

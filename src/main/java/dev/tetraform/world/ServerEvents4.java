@@ -6,7 +6,6 @@ import dev.tetraform.math.Vec4;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.neoforge.event.entity.item.ItemTossEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -78,20 +77,30 @@ public final class ServerEvents4 {
         ServerWorld4.shutdown();
     }
 
-    /** Items thrown in a 4D world become 4D item entities thrown along the 4D look direction. */
+    /**
+     * Every entity that joins a 4D level gets a W: projectiles and dropped items take their owner's, everything
+     * else (vanilla-spawned or summoned without a 4D position) the nearest player's.
+     */
     @SubscribeEvent
-    public static void onToss(ItemTossEvent event) {
-        if (!(event.getPlayer() instanceof ServerPlayer sp)) return;
-        ServerWorld4 w = ServerWorld4.get(sp.level());
-        if (w == null) return;
-        event.setCanceled(true);
-        PlayerState4 st = ServerWorld4.state(sp);
-        Vec4 look = st.frame.lookDirection(sp.getYRot(), sp.getXRot());
-        w.dropItem(st.pos.add(0, 1.3, 0, 0).add(look.scale(0.4)), event.getEntity().getItem());
-        var e = w.entities().stream().reduce((a, b) -> b).orElse(null);
-        if (e != null) {
-            e.vel = look.scale(0.3).add(0, 0.1, 0, 0);
-            e.pickupDelay = 40;
+    public static void onJoin(net.neoforged.neoforge.event.entity.EntityJoinLevelEvent event) {
+        var e = event.getEntity();
+        if (event.getLevel().isClientSide() || !Tetraform.is4D(event.getLevel()) || W4.has(e)) return;
+        net.minecraft.world.entity.Entity owner = null;
+        if (e instanceof net.minecraft.world.entity.projectile.Projectile pr) owner = pr.getOwner();
+        else if (e instanceof net.minecraft.world.entity.item.ItemEntity it) owner = it.getOwner();
+        if (owner == null && e instanceof ServerPlayer sp) {
+            W4.set(e, ServerWorld4.state(sp).pos.w());
+            return;
+        }
+        if (owner == null) owner = event.getLevel().getNearestPlayer(e, 128);
+        W4.set(e, owner == null ? 0.5 : W4.get(owner));
+    }
+
+    @SubscribeEvent
+    public static void onEntityTick(net.neoforged.neoforge.event.tick.EntityTickEvent.Post event) {
+        if (event.getEntity() instanceof net.minecraft.world.entity.Mob mob && mob.level() instanceof ServerLevel sl && Tetraform.is4D(sl)) {
+            ServerWorld4 w = ServerWorld4.getIfLoaded(sl);
+            if (w != null) w.tickMobW(mob);
         }
     }
 }
