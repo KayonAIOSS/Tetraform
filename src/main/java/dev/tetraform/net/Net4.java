@@ -56,19 +56,21 @@ public final class Net4 {
     }
 
     /** Authoritative 4D position (and optionally frame) from the server: teleports, respawn, entering. */
-    public record Teleport4S2C(double x, double y, double z, double w, double[] frame, boolean reset) implements CustomPacketPayload {
+    public record Teleport4S2C(double x, double y, double z, double w, double[] frame, boolean reset, int seq) implements CustomPacketPayload {
         public static final Type<Teleport4S2C> TYPE = typeOf("teleport4");
         public static final StreamCodec<RegistryFriendlyByteBuf, Teleport4S2C> CODEC = StreamCodec.of(
                 (buf, v) -> {
                     buf.writeDouble(v.x); buf.writeDouble(v.y); buf.writeDouble(v.z); buf.writeDouble(v.w);
                     for (int i = 0; i < 9; i++) buf.writeDouble(v.frame[i]);
                     buf.writeBoolean(v.reset);
+                    buf.writeVarInt(v.seq);
                 },
                 buf -> {
                     double x = buf.readDouble(), y = buf.readDouble(), z = buf.readDouble(), w = buf.readDouble();
                     double[] f = new double[9];
                     for (int i = 0; i < 9; i++) f[i] = buf.readDouble();
-                    return new Teleport4S2C(x, y, z, w, f, buf.readBoolean());
+                    boolean reset = buf.readBoolean();
+                    return new Teleport4S2C(x, y, z, w, f, reset, buf.readVarInt());
                 });
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
@@ -107,19 +109,21 @@ public final class Net4 {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Move4C2S(double x, double y, double z, double w, double[] frame, boolean onGround) implements CustomPacketPayload {
+    public record Move4C2S(double x, double y, double z, double w, double[] frame, boolean onGround, int teleportSeq) implements CustomPacketPayload {
         public static final Type<Move4C2S> TYPE = typeOf("move4");
         public static final StreamCodec<RegistryFriendlyByteBuf, Move4C2S> CODEC = StreamCodec.of(
                 (buf, v) -> {
                     buf.writeDouble(v.x); buf.writeDouble(v.y); buf.writeDouble(v.z); buf.writeDouble(v.w);
                     for (int i = 0; i < 9; i++) buf.writeDouble(v.frame[i]);
                     buf.writeBoolean(v.onGround);
+                    buf.writeVarInt(v.teleportSeq);
                 },
                 buf -> {
                     double x = buf.readDouble(), y = buf.readDouble(), z = buf.readDouble(), w = buf.readDouble();
                     double[] f = new double[9];
                     for (int i = 0; i < 9; i++) f[i] = buf.readDouble();
-                    return new Move4C2S(x, y, z, w, f, buf.readBoolean());
+                    boolean onGround = buf.readBoolean();
+                    return new Move4C2S(x, y, z, w, f, onGround, buf.readVarInt());
                 });
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }

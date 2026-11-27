@@ -197,8 +197,17 @@ public final class Structures4 {
         // centre the rotated template on (u, v)
         BoundingBox b = t.getBoundingBox(settings(rot), BlockPos.ZERO);
         BlockPos origin = new BlockPos(u - (b.minX() + b.maxX()) / 2, y, v - (b.minZ() + b.maxZ()) / 2);
-        emit(site, t, rot, origin, true, 1, foundation);
+        // Vanilla igloos place their air (it clears snow inside); ruined portals and shipwrecks ignore it.
+        AirMode air = id.getPath().startsWith("igloo") ? AirMode.ALL : AirMode.NONE;
+        emit(site, t, rot, origin, true, 1, foundation, air, false);
     }
+
+    /**
+     * Which template air blocks are written. Vanilla's legacy pool elements (every village piece), ruined portals
+     * and shipwrecks ignore template air, so it never digs into the terrain. Writing it carved the grass off the
+     * whole 16x16 tile of every street, leaving a layer of bare dirt one block down.
+     */
+    private enum AirMode { NONE, ABOVE_GROUND, ALL }
 
     private static StructurePlaceSettings settings(Rotation rot) {
         return new StructurePlaceSettings().setRotation(rot);
@@ -242,8 +251,35 @@ public final class Structures4 {
         }
         for (Piece p : pieces) {
             StructureTemplate t = templates().get(p.element().getTemplateLocation()).orElse(null);
-            if (t != null) emit(site, t, p.rot(), p.pos(), p.rigid(), p.element().getGroundLevelDelta(), p.rigid());
+            if (t == null) continue;
+            boolean legacy = p.element() instanceof net.minecraft.world.level.levelgen.structure.pools.LegacySinglePoolElement;
+            // Legacy pieces skip air like vanilla. Rigid ones keep the air above their ground layer, which stands in
+            // for vanilla's "beard" terrain adaptation: a house built into a slope is hollowed out, not filled.
+            AirMode air = !legacy ? AirMode.ALL : p.rigid() ? AirMode.ABOVE_GROUND : AirMode.NONE;
+            boolean street = p.element().getTemplateLocation().getPath().contains("/streets/");
+            emit(site, t, p.rot(), p.pos(), p.rigid(), p.element().getGroundLevelDelta(), p.rigid(), air, street);
         }
+        greenExposedDirt(site);
+    }
+
+    /**
+     * Template dirt that ends up open to the sky becomes grass. Vanilla grass spreads onto it within minutes; the 4D
+     * world has no grass spreading, so without this every yard and foundation stayed bare dirt.
+     */
+    private static void greenExposedDirt(Site site) {
+        Map<Long, Integer> index = new HashMap<>(site.count * 2);
+        for (int i = 0; i < site.count; i++) index.put(packUYV(site.pos[i * 3], site.pos[i * 3 + 1], site.pos[i * 3 + 2]), i);
+        BlockState grass = Blocks.GRASS_BLOCK.defaultBlockState();
+        for (int i = 0; i < site.count; i++) {
+            if (!site.states[i].is(Blocks.DIRT)) continue;
+            Integer above = index.get(packUYV(site.pos[i * 3], site.pos[i * 3 + 1] + 1, site.pos[i * 3 + 2]));
+            // nothing from the structure above means open air (structures sit on the surface)
+            if (above == null || !site.states[above].canOcclude() && site.states[above].getFluidState().isEmpty()) site.states[i] = grass;
+        }
+    }
+
+    private static long packUYV(int u, int y, int v) {
+        return ((long) (u & 0x3FFFFFF) << 38) | ((long) (y & 0xFFF) << 26) | (v & 0x3FFFFFF);
     }
 
     private Piece attach(Piece parent, StructureTemplate.JigsawBlockInfo j, BlockPos target, StructureTemplatePool pool, List<Piece> pieces,
@@ -259,7 +295,7 @@ public final class Structures4 {
                     if (parent.rigid() && rigid) {
                         y = target.getY() - k.pos().getY();
                     } else {
-                        y = surface(site.plane, target.getX(), target.getZ(), site.cCoord) + 1 - k.pos().getY();
+                        y = matchHeight(site.plane, target.getX(), target.getZ(), site.cCoord) + 1 - k.pos().getY();
                     }
                     BlockPos origin = new BlockPos(target.getX() - k.pos().getX(), y, target.getZ() - k.pos().getZ());
                     BoundingBox box = se.getBoundingBox(templates(), origin, rot);
@@ -295,7 +331,13 @@ public final class Structures4 {
     }
 
     /** Writes a template's blocks and entities into the site in template space. */
-    private void emit(Site site, StructureTemplate t, Rotation rot, BlockPos origin, boolean rigid, int groundDelta, boolean foundation) {
+    /** Terrain-matching pieces follow the water surface like vanilla's WORLD_SURFACE_WG heightmap (bridges, not sunken paths). */
+    private int matchHeight(Plane p, int u, int v, int c) {
+        return Math.max(surface(p, u, v, c), TerrainGenerator4.SEA_LEVEL);
+    }
+
+    private void emit(Site site, StructureTemplate t, Rotation rot, BlockPos origin, boolean rigid, int groundDelta, boolean foundation,
+                      AirMode airMode, boolean street) {
         var acc = (StructureTemplateAccessor) t;
         if (acc.tetraform$palettes().isEmpty()) return;
         StructurePlaceSettings st = settings(rot);
@@ -316,12 +358,18 @@ public final class Structures4 {
                 }
                 if (s.is(Blocks.STRUCTURE_VOID)) continue;
             }
+            if (s.isAir() && (airMode == AirMode.NONE || airMode == AirMode.ABOVE_GROUND && info.pos().getY() - minY < groundDelta)) continue;
             s = s.rotate(rot);
             if (site.plane.transposed) s = s.mirror(Mirror.LEFT_RIGHT).rotate(Rotation.CLOCKWISE_90);
             BlockPos rel = StructureTemplate.calculateRelativePosition(st, info.pos());
             int u = origin.getX() + rel.getX(), v = origin.getZ() + rel.getZ();
             int y = rigid ? origin.getY() + rel.getY()
-                    : surface(site.plane, u, v, site.cCoord) + 1 - groundDelta + rel.getY() - minY;
+                    : matchHeight(site.plane, u, v, site.cCoord) + 1 - groundDelta + rel.getY() - minY;
+            if (street && s.is(Blocks.DIRT_PATH)) {
+                // vanilla's street_plains processor: planks over water, and a few grass blocks breaking up the path
+                if (surface(site.plane, u, v, site.cCoord) < TerrainGenerator4.SEA_LEVEL) s = Blocks.OAK_PLANKS.defaultBlockState();
+                else if (Math.floorMod((u * 73856093) ^ (v * 19349663) ^ (int) seed, 10) == 0) s = Blocks.GRASS_BLOCK.defaultBlockState();
+            }
             site.add(u, y, v, s);
             if (foundation && rigid && info.pos().getY() == minY && !s.isAir() && s.getFluidState().isEmpty()) {
                 footprint.put(((long) u << 32) | (v & 0xFFFFFFFFL), y);
@@ -337,7 +385,7 @@ public final class Structures4 {
         for (var ent : acc.tetraform$entities()) {
             Vec3 p = StructureTemplate.transform(ent.pos, Mirror.NONE, rot, BlockPos.ZERO);
             double y = rigid ? origin.getY() + p.y
-                    : surface(site.plane, (int) Math.floor(origin.getX() + p.x), (int) Math.floor(origin.getZ() + p.z), site.cCoord) + 1 + p.y - minY;
+                    : matchHeight(site.plane, (int) Math.floor(origin.getX() + p.x), (int) Math.floor(origin.getZ() + p.z), site.cCoord) + 1 + p.y - minY;
             site.entityPos.add(new double[]{origin.getX() + p.x, y, origin.getZ() + p.z});
             site.entityTags.add(ent.nbt.copy());
         }

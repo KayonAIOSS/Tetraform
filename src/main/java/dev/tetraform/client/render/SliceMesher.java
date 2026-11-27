@@ -37,6 +37,12 @@ public final class SliceMesher {
 
     private static final ThreadLocal<Slicer> SLICER = ThreadLocal.withInitial(Slicer::new);
 
+    /**
+     * Fills a vanilla render section from the cells of the slice it covers. Cached cells are copied in; missing
+     * ones are built right here when the section was dirtied by a block or column change (so edits never flicker),
+     * and otherwise handed to {@link MeshWorkers} and left empty until they are ready (see
+     * {@link ClientState4.MeshParams#loadVisibly()}).
+     */
     public static void onAddSectionGeometry(AddSectionGeometryEvent event) {
         if (!ClientState4.active || !ClientState4.hasPos) return;
         Minecraft mc = Minecraft.getInstance();
@@ -45,26 +51,70 @@ public final class SliceMesher {
         ClientLevel4 level = ClientState4.LEVEL;
         if (origin.getY() >= level.maxY() || origin.getY() < 0) return;
         ClientState4.MeshParams params = ClientState4.mesh;
-        SliceFrame f = params.frame();
-        MeshCache.Key key = new MeshCache.Key(origin.asLong(), MeshCache.Key.q(f.get(1, 1)), MeshCache.Key.q(f.get(2, 1)),
-                MeshCache.Key.q(params.depth()), MeshCache.Key.q(params.offX()), MeshCache.Key.q(params.offZ()), level.epoch());
-        MeshCache.Entry cached = MeshCache.get(key);
-        if (cached != null) {
-            if (!cached.layers.isEmpty()) event.addRenderer(ctx -> MeshCache.replay(cached, ctx));
-            return;
-        }
+        boolean inline = !params.loadVisibly() | dev.tetraform.client.SliceManager.takeContentDirty(origin);
         event.addRenderer(ctx -> {
             try {
-                Sink sink = build(ctx, origin, params, level);
-                if (sink != null && level.epoch() == key.epoch()) MeshCache.put(key, MeshCache.entryFrom(sink.recorders));
+                fillSection(ctx, origin, params, level, inline);
             } catch (Throwable t) {
                 dev.tetraform.Tetraform.LOGGER.error("4D slice meshing failed for section {}", origin, t);
             }
         });
     }
 
+    private static void fillSection(AddSectionGeometryEvent.SectionRenderingContext ctx, BlockPos origin, ClientState4.MeshParams params,
+                                    ClientLevel4 level, boolean inline) {
+        int ox = origin.getX(), oz = origin.getZ(), sy = origin.getY() >> 4;
+        // the section covers slice coordinates [ox - offX, ox - offX + 16) x [oz - offZ, oz - offZ + 16)
+        double lx0 = ox - params.offX(), lz0 = oz - params.offZ();
+        int i0 = Math.floorDiv((int) Math.floor(lx0), 16), i1 = Math.floorDiv((int) Math.ceil(lx0 + 16) - 1, 16);
+        int j0 = Math.floorDiv((int) Math.floor(lz0), 16), j1 = Math.floorDiv((int) Math.ceil(lz0 + 16) - 1, 16);
+        for (int i = i0; i <= i1; i++) {
+            for (int j = j0; j <= j1; j++) {
+                MeshCache.Key key = cellKey(i, sy, j, params.frame(), params.depth(), level);
+                MeshCache.Entry e = MeshCache.get(key);
+                if (e == null) {
+                    if (!inline) {
+                        MeshWorkers.demand(key, params.frame(), params.depth());
+                        continue;
+                    }
+                    e = buildCell(key, params.frame(), params.depth(), level);
+                }
+                if (!e.layers.isEmpty()) {
+                    MeshCache.replay(e, ctx, (float) (i * 16 + params.offX() - ox), (float) (j * 16 + params.offZ() - oz));
+                }
+            }
+        }
+    }
+
+    /** Cache key of a cell: its position, the hyperplane, and a stamp of every column that can change its look. */
+    public static MeshCache.Key cellKey(int i, int sy, int j, SliceFrame f, double depth, ClientLevel4 level) {
+        double minX = Double.MAX_VALUE, minZ = Double.MAX_VALUE, minW = Double.MAX_VALUE;
+        double maxX = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE, maxW = -Double.MAX_VALUE;
+        for (int c = 0; c < 8; c++) {
+            var p = f.toWorld(i * 16 + ((c & 1) != 0 ? 16 : 0), 0, j * 16 + ((c & 2) != 0 ? 16 : 0), depth + ((c & 4) != 0 ? 1.5 : -1.5));
+            minX = Math.min(minX, p.x()); maxX = Math.max(maxX, p.x());
+            minZ = Math.min(minZ, p.z()); maxZ = Math.max(maxZ, p.z());
+            minW = Math.min(minW, p.w()); maxW = Math.max(maxW, p.w());
+        }
+        // block light reaches 15 blocks, sky light and face culling a few: 16 blocks of margin covers all of them
+        long stamp = level.stamp(
+                Math.floorDiv((int) Math.floor(minX) - 16, 16), Math.floorDiv((int) Math.floor(maxX) + 16, 16),
+                Math.floorDiv((int) Math.floor(minZ) - 16, 16), Math.floorDiv((int) Math.floor(maxZ) + 16, 16),
+                Math.floorDiv((int) Math.floor(minW) - 16, 16), Math.floorDiv((int) Math.floor(maxW) + 16, 16));
+        return new MeshCache.Key(i, sy, j, MeshCache.Key.q(f.get(1, 1)), MeshCache.Key.q(f.get(2, 1)), MeshCache.Key.q(depth), stamp);
+    }
+
+    /** Slices one cell (no render offset) and caches it if the world didn't change meanwhile. */
+    static MeshCache.Entry buildCell(MeshCache.Key key, SliceFrame f, double depth, ClientLevel4 level) {
+        BlockPos origin = new BlockPos(key.cx() * 16, key.sy() * 16, key.cz() * 16);
+        Sink sink = build(origin, new ClientState4.MeshParams(f, depth, 0, 0, 0, false), level);
+        MeshCache.Entry e = MeshCache.entryFrom(sink.recorders);
+        if (cellKey(key.cx(), key.sy(), key.cz(), f, depth, level).equals(key)) MeshCache.put(key, e);
+        return e;
+    }
+
     private static final class Sink implements Slicer.FaceSink {
-        AddSectionGeometryEvent.SectionRenderingContext ctx;
+        final float[] owner = new float[2];
         final EnumMap<ChunkSectionLayer, VertexConsumer> buffers = new EnumMap<>(ChunkSectionLayer.class);
         final EnumMap<ChunkSectionLayer, MeshCache.Recorder> recorders = new EnumMap<>(ChunkSectionLayer.class);
         BlockState state;
@@ -81,7 +131,7 @@ public final class SliceMesher {
         VertexConsumer buffer(ChunkSectionLayer l) {
             VertexConsumer c = buffers.get(l);
             if (c == null) {
-                MeshCache.Recorder r = new MeshCache.Recorder(ctx.getOrCreateChunkBuffer(l));
+                MeshCache.Recorder r = new MeshCache.Recorder(owner);
                 recorders.put(l, r);
                 c = r;
                 buffers.put(l, c);
@@ -378,7 +428,7 @@ public final class SliceMesher {
         return Math.min(1f, nx * nx * 0.6f + nz * nz * 0.8f + up * 1.0f + down * 0.5f);
     }
 
-    private static Sink build(AddSectionGeometryEvent.SectionRenderingContext ctx, BlockPos origin, ClientState4.MeshParams params, ClientLevel4 level) {
+    private static Sink build(BlockPos origin, ClientState4.MeshParams params, ClientLevel4 level) {
         SliceFrame f = params.frame();
         double depth = params.depth();
         int ox = origin.getX(), oy = origin.getY(), oz = origin.getZ();
@@ -407,7 +457,6 @@ public final class SliceMesher {
         int b0 = (int) Math.floor(lo[b]) - 1, b1 = (int) Math.floor(hi[b]) + 1;
 
         Sink sink = new Sink();
-        sink.ctx = ctx;
         sink.level = level;
         sink.oy = oy;
         sink.zc = f.get(1, 1);
@@ -467,6 +516,8 @@ public final class SliceMesher {
                         cached = level.getColumnAt(x, z, w);
                         if (cached == null) continue;
                     }
+                    sink.owner[0] = (float) (rx - ox);
+                    sink.owner[1] = (float) (rz - oz);
                     meshColumnRun(slicer, sink, level, cached, x, z, w, oy, yTop);
                 }
             }

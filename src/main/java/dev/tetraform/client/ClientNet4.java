@@ -55,6 +55,7 @@ public final class ClientNet4 {
                 DECODED.clear();
                 ClientState4.reset();
             }
+            ClientState4.teleportSeq = p.seq();
             ClientState4.pos = new Vec4(p.x(), p.y(), p.z(), p.w());
             ClientState4.prevPos = ClientState4.pos;
             ClientState4.vel = Vec4.ZERO;

@@ -30,6 +30,11 @@ public final class TetraformClient {
         NeoForge.EVENT_BUS.addListener(TetraformClient::onMovementInput);
         NeoForge.EVENT_BUS.addListener(TetraformClient::onLogout);
         NeoForge.EVENT_BUS.addListener(Rotation4::onScroll);
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.client.event.RenderFrameEvent.Pre e) -> SliceManager.onFrame());
+        // Tetraform draws the outline of the 4D target itself; vanilla's would sit on the render-space cell.
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.client.event.ExtractBlockOutlineRenderStateEvent e) -> {
+            if (ClientState4.active) e.setCanceled(true);
+        });
         Hooks4.travelHook = p -> ClientState4.active && p == Minecraft.getInstance().player;
         installAccessHooks();
     }
@@ -55,6 +60,7 @@ public final class TetraformClient {
             if (player != null && ClientState4.target != null && ClientState4.targetEntity == null) Interaction4.pick();
         }
         if (player != null && ClientState4.hasPos) Interaction4.tick(player);
+        if (DevSelfTest.ENABLED) DevSelfTest.tick(mc);
     }
 
     private static long lastHint;
@@ -89,24 +95,44 @@ public final class TetraformClient {
                 public int surface(int x, int z) { return ClientState4.LEVEL.heightAt(x, z, bw); }
             };
         };
-        dev.tetraform.world.Access4.clientRender = () -> {
-            if (!ClientState4.active) return null;
-            final ClientState4.MeshParams mp = ClientState4.mesh;
-            return new dev.tetraform.world.Access4.Mapper() {
-                private dev.tetraform.math.Vec4 world(int x, int y, int z) {
-                    return mp.frame().toWorld(x + 0.5 - mp.offX(), y, z + 0.5 - mp.offZ(), mp.depth());
-                }
-                public net.minecraft.world.level.block.state.BlockState get(int x, int y, int z) {
-                    var p = world(x, y, z);
-                    return ClientState4.LEVEL.getBlock((int) Math.floor(p.x()), y, (int) Math.floor(p.z()), (int) Math.floor(p.w()));
-                }
-                public boolean set(int x, int y, int z, net.minecraft.world.level.block.state.BlockState s, boolean n) { return false; }
-                public int surface(int x, int z) {
-                    var p = world(x, 0, z);
-                    return ClientState4.LEVEL.heightAt((int) Math.floor(p.x()), (int) Math.floor(p.z()), (int) Math.floor(p.w()));
-                }
-            };
+        dev.tetraform.world.Access4.clientRender = TetraformClient::renderMapper;
+        // Everything else on the render thread (other mods such as Jade, particles, camera fluid checks, shadows)
+        // reads the visible slice too, in the same render-space coordinates the camera and vanilla entities use.
+        dev.tetraform.world.Access4.clientDefault = level -> {
+            Minecraft mc = Minecraft.getInstance();
+            return mc != null && level == mc.level && mc.isSameThread() ? renderMapper() : null;
         };
+    }
+
+    private static ClientState4.MeshParams mapperParams;
+    private static dev.tetraform.world.Access4.Mapper mapper;
+
+    /** The render-space mapper for the current slice; one instance per mesh mapping (block reads are hot). */
+    private static dev.tetraform.world.Access4.Mapper renderMapper() {
+        if (!ClientState4.active) return null;
+        final ClientState4.MeshParams mp = ClientState4.mesh;
+        dev.tetraform.world.Access4.Mapper m = mapper;
+        if (m != null && mapperParams == mp) return m;
+        m = new dev.tetraform.world.Access4.Mapper() {
+            private dev.tetraform.math.Vec4 world(int x, int y, int z) {
+                return mp.frame().toWorld(x + 0.5 - mp.offX(), y, z + 0.5 - mp.offZ(), mp.depth());
+            }
+            public net.minecraft.world.level.block.state.BlockState get(int x, int y, int z) {
+                // the block under the crosshair answers for the cell the vanilla hit result names
+                var t = Pick4.targetAt(x, y, z);
+                if (t != null) return t;
+                var p = world(x, y, z);
+                return ClientState4.LEVEL.getBlock((int) Math.floor(p.x()), y, (int) Math.floor(p.z()), (int) Math.floor(p.w()));
+            }
+            public boolean set(int x, int y, int z, net.minecraft.world.level.block.state.BlockState s, boolean n) { return false; }
+            public int surface(int x, int z) {
+                var p = world(x, 0, z);
+                return ClientState4.LEVEL.heightAt((int) Math.floor(p.x()), (int) Math.floor(p.z()), (int) Math.floor(p.w()));
+            }
+        };
+        mapper = m;
+        mapperParams = mp;
+        return m;
     }
 
     private static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {

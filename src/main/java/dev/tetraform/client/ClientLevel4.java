@@ -15,11 +15,32 @@ public final class ClientLevel4 extends Level4 {
     /** Column key -> packed emitter list: {pos long, emission} pairs. */
     private final ConcurrentHashMap<Long, long[]> emitters = new ConcurrentHashMap<>();
     private volatile int maxY = 0;
-    /** Bumped whenever any block or column changes; part of the mesh-cache key. */
+    /** Bumped whenever any block or column changes. */
     private final java.util.concurrent.atomic.AtomicLong epoch = new java.util.concurrent.atomic.AtomicLong();
+    /** Column key -> the epoch of its last change (loaded, unloaded or a block in it changed). */
+    private final ConcurrentHashMap<Long, Long> columnVersion = new ConcurrentHashMap<>();
 
     public long epoch() {
         return epoch.get();
+    }
+
+    private void touch(long columnKey) {
+        columnVersion.put(columnKey, epoch.incrementAndGet());
+    }
+
+    /**
+     * A fingerprint of every column in the given column-coordinate box: it changes whenever any of them is
+     * loaded, unloaded or edited. The mesh cache keys cells with it, so an edit only invalidates nearby geometry.
+     */
+    public long stamp(int cx0, int cx1, int cz0, int cz1, int cw0, int cw1) {
+        long h = 0x9E3779B97F4A7C15L;
+        for (int cw = cw0; cw <= cw1; cw++) for (int cz = cz0; cz <= cz1; cz++) for (int cx = cx0; cx <= cx1; cx++) {
+            long k = Column4.key(cx, cz, cw);
+            Long v = columnVersion.get(k);
+            long x = (v == null ? 0 : v) * 0xC2B2AE3D27D4EB4FL + (columns.containsKey(k) ? 1 : 0);
+            h = Long.rotateLeft(h ^ x, 27) * 0x94D049BB133111EBL;
+        }
+        return h;
     }
     /**
      * Cached per-section face-exposure masks (bit i = face Direction4.VALUES[i] is visible), keyed by
@@ -114,7 +135,7 @@ public final class ClientLevel4 extends Level4 {
 
     public void put(Column4 c) {
         columns.put(c.key(), c);
-        epoch.incrementAndGet();
+        touch(c.key());
         invalidateSky(c.cx * 16, c.cz * 16, c.cw * 16, c.cx * 16 + 15, c.cz * 16 + 15, c.cw * 16 + 15);
         invalidateColumnAndNeighbours(c.cx, c.cz, c.cw);
         reindexEmitters(c);
@@ -132,7 +153,7 @@ public final class ClientLevel4 extends Level4 {
         emitters.remove(key);
         int kx = Column4.keyX(key) * 16, kz = Column4.keyZ(key) * 16, kw = Column4.keyW(key) * 16;
         invalidateSky(kx, kz, kw, kx + 15, kz + 15, kw + 15);
-        epoch.incrementAndGet();
+        touch(key);
         invalidateColumnAndNeighbours(Column4.keyX(key), Column4.keyZ(key), Column4.keyW(key));
     }
 
@@ -141,6 +162,7 @@ public final class ClientLevel4 extends Level4 {
         emitters.clear();
         exposure.clear();
         sky.clear();
+        columnVersion.clear();
         epoch.incrementAndGet();
         dev.tetraform.client.render.MeshCache.clear();
         maxY = 0;
@@ -152,7 +174,7 @@ public final class ClientLevel4 extends Level4 {
 
     public BlockState setClient(BlockPos4 p, BlockState s) {
         BlockState old = setBlockRaw(p, s);
-        epoch.incrementAndGet();
+        touch(Column4.key(p.x() >> 4, p.z() >> 4, p.w() >> 4));
         if (blocksSky(old) != blocksSky(s) || old.isAir() != s.isAir()) invalidateSky(p.x(), p.z(), p.w(), p.x(), p.z(), p.w());
         // the block itself and its eight neighbours may change exposure
         invalidateSection(p.x(), p.y(), p.z(), p.w());

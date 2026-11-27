@@ -1,0 +1,77 @@
+package dev.tetraform.client;
+
+import dev.tetraform.math.Direction4;
+import dev.tetraform.math.Vec4;
+import dev.tetraform.world.Level4;
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+
+/**
+ * Publishes the 4D target through vanilla's own fields, {@code Minecraft.hitResult} and
+ * {@code Minecraft.crosshairPickEntity}, in render-space coordinates. Mods that show or act on "what the player
+ * is looking at" (Jade, WTHIT, minimaps, accessibility mods) read exactly these, so they see what the 4D crosshair
+ * sees. Runs right after vanilla's pick, which can't see 4D terrain on its own.
+ */
+public final class Pick4 {
+    private Pick4() {}
+
+    private record Cell(int x, int y, int z, BlockState state) {}
+
+    private static volatile Cell cell;
+
+    /** The targeted block if (x, y, z) is the render cell named by the current block hit result, else null. */
+    public static BlockState targetAt(int x, int y, int z) {
+        Cell c = cell;
+        return c != null && c.x == x && c.y == y && c.z == z ? c.state : null;
+    }
+
+    public static void afterVanillaPick(Minecraft mc) {
+        if (!ClientState4.active || !ClientState4.hasPos || mc.player == null) {
+            cell = null;
+            return;
+        }
+        Entity ent = ClientState4.targetEntity;
+        Level4.Hit hit = ClientState4.target;
+        if (ent != null) {
+            cell = null;
+            double[] r = SliceManager.toRender(new Vec4(ent.getX(), ent.getY() + ent.getBbHeight() / 2, ent.getZ(), dev.tetraform.world.W4.get(ent)));
+            mc.hitResult = new EntityHitResult(ent, new Vec3(r[0], r[1], r[2]));
+            mc.crosshairPickEntity = ent;
+            return;
+        }
+        mc.crosshairPickEntity = null;
+        Vec3 eye = mc.player.getEyePosition();
+        if (hit == null) {
+            cell = null;
+            Vec3 end = eye.add(mc.player.getViewVector(1f).scale(mc.player.blockInteractionRange()));
+            mc.hitResult = BlockHitResult.miss(end, Direction.getApproximateNearest(end.subtract(eye)), BlockPos.containing(end));
+            return;
+        }
+        ClientState4.MeshParams m = ClientState4.mesh;
+        Vec4 p = hit.point();
+        Direction face = toDirection(hit.face(), m);
+        double rx = m.renderX(p.x(), p.z(), p.w()), rz = m.renderZ(p.x(), p.z(), p.w());
+        Vec3 loc = new Vec3(rx, p.y(), rz);
+        // the cell just inside the hit face holds the block
+        BlockPos pos = BlockPos.containing(loc.subtract(face.getStepX() * 0.01, face.getStepY() * 0.01, face.getStepZ() * 0.01));
+        cell = new Cell(pos.getX(), pos.getY(), pos.getZ(), ClientState4.LEVEL.getBlock(hit.pos()));
+        mc.hitResult = new BlockHitResult(loc, face, pos, false);
+    }
+
+    /** A 4D face direction as the nearest render-space direction (w faces land on the rotated z axis). */
+    private static Direction toDirection(Direction4 d, ClientState4.MeshParams m) {
+        if (d.dx != 0) return d.dx > 0 ? Direction.EAST : Direction.WEST;
+        if (d.dy != 0) return d.dy > 0 ? Direction.UP : Direction.DOWN;
+        // render z' of the face normal (0, dz, dw): frame.localZ is linear, so take the difference
+        double nz = m.frame().localZ(0, d.dz, d.dw);
+        if (Math.abs(nz) < 1.0E-6) return Direction.UP;
+        return nz > 0 ? Direction.SOUTH : Direction.NORTH;
+    }
+}

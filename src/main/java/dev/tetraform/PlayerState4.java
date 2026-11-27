@@ -15,6 +15,11 @@ public final class PlayerState4 implements ValueIOSerializable {
     public String dimension = "";
     /** Server tick of the last movement update; used for speed sanity checks. */
     public transient long lastUpdate;
+    /**
+     * Bumped with every server teleport. Moves the client sent before it saw the newest teleport carry an older
+     * number and are ignored; otherwise one stale packet could undo a /tp (creative skips the speed check).
+     */
+    public transient int teleportSeq;
 
     @Override
     public void serialize(ValueOutput out) {

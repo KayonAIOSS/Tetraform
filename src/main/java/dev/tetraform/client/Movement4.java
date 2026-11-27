@@ -174,7 +174,7 @@ public final class Movement4 {
         sendTimer = 0;
         lastSent = p;
         lastSentZW = ClientState4.zw;
-        ClientPacketDistributor.sendToServer(new Net4.Move4C2S(p.x(), p.y(), p.z(), p.w(), ClientState4.FRAME.values(), ClientState4.onGround));
+        ClientPacketDistributor.sendToServer(new Net4.Move4C2S(p.x(), p.y(), p.z(), p.w(), ClientState4.FRAME.values(), ClientState4.onGround, ClientState4.teleportSeq));
     }
 
     public static void forceSend() {

@@ -19,6 +19,7 @@
     "ClientInputAccessor",
     "CommandBlockEditScreenAccessor",
     "ClientPacketListener4Mixin",
+    "MinecraftPick4Mixin",
     "LocalPlayerSendPositionMixin",
     "EntityRenderTransformMixin",
     "EntityVisibility4Mixin",

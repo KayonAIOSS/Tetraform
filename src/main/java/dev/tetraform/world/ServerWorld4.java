@@ -207,7 +207,8 @@ public final class ServerWorld4 {
         if (p.level() == level) {
             p.connection.teleport(st.pos.x(), st.pos.y(), st.pos.z(), p.getYRot(), p.getXRot());
         }
-        PacketDistributor.sendToPlayer(p, new Net4.Teleport4S2C(st.pos.x(), st.pos.y(), st.pos.z(), st.pos.w(), st.frame.values(), reset));
+        st.teleportSeq++;
+        PacketDistributor.sendToPlayer(p, new Net4.Teleport4S2C(st.pos.x(), st.pos.y(), st.pos.z(), st.pos.w(), st.frame.values(), reset, st.teleportSeq));
         Tracker t = trackers.get(p.getUUID());
         if (t != null) t.recomputeIn = 0;
     }
@@ -242,7 +243,8 @@ public final class ServerWorld4 {
         if (w == null) return;
         PlayerState4 st = state(p);
         if (!st.dimension.equals(p.level().dimension().identifier().toString())) return;
-        Vec4 np = new Vec4(m.x(), m.y(), m.z(), m.w());
+        if (m.teleportSeq() != st.teleportSeq) return; // sent before the client saw the latest teleport
+        Vec4 np =new Vec4(m.x(), m.y(), m.z(), m.w());
         if (!Double.isFinite(np.lengthSqr())) return;
         double moved = np.distance(st.pos);
         long dt = Math.max(1, w.tick - st.lastUpdate);

@@ -27,6 +27,12 @@ neoForge {
             if (project.hasProperty('autoJoin')) {
                 programArguments.addAll('--quickPlayMultiplayer', project.property('autoJoin').toString())
             }
+            if (project.hasProperty('selfTest')) {
+                systemProperty 'tetraform.selftest', 'true'
+            }
+            if (project.hasProperty('autoWorld')) {
+                programArguments.addAll('--quickPlaySingleplayer', project.property('autoWorld').toString())
+            }
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
         server {

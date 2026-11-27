@@ -21,7 +21,7 @@ worlds created before the mod was installed.
 | **Fluids / gravity / TNT** | Water and lava spread in 6 horizontal directions, form infinite sources and mix into obsidian and cobblestone. Sand and gravel fall. TNT blows up a 4D hyperball. |
 | **Creatures** | **Every vanilla creature** (animals, monsters, villagers, iron golems) and every item entity has a W coordinate. Each one runs its normal vanilla AI inside its own x-y-z slice, so pathfinding, line of sight, sun burning and doors all work against the 4D world. Creatures drift into neighbouring W layers now and then, and a hunting monster lines its W up with its target. They are drawn with their **vanilla models** (player skins and skin-layer mods included). They only see, attack and collide with things in their own slice. Your W rotation changes only what you see: when you snap ana with `Z`, a cow looking at you doesn't appear to turn. Walk forward and you leave its slice, so it disappears. |
 | **Structures** | Vanilla **villages** (built from vanilla's own template pools, with villagers, golems and animals), **ruined portals**, **igloos** and **shipwrecks**. Each one takes two of the horizontal axes as its basis: template x/z become (x, z), (z, x), (x, w) or (w, x), and it is one layer thick along the remaining axis. An x-w village is seen whole at zw 90°; a transposed one comes out mirrored. |
-| **Commands** | 4 numbers per coordinate: `/setblock x y z w <block>`, `/fill x1 y1 z1 w1 x2 y2 z2 w2 <block> [replace\|keep\|hollow\|outline]` (**8** numbers), `/clone`, `/tp x y z w [yaw pitch zw]`, `/tp <players> x y z w [yaw pitch zw]`, `/summon <any entity> x y z w [nbt]`. `~` relative coordinates work. The 3-coordinate vanilla forms still work. |
+| **Commands** | 4 numbers per coordinate: `/setblock x y z w <block> [replace\|keep\|destroy]`, `/fill x1 y1 z1 w1 x2 y2 z2 w2 <block> [replace [filter]\|keep\|hollow\|outline\|destroy]` (**8** numbers), `/clone <begin> <end> <dest> [replace\|masked\|filtered <filter>] [force\|move\|normal]`, `/tp [targets] x y z w [yaw pitch zw]` (any entities, not only players), `/summon <entity> x y z w [nbt]`, `/execute if\|unless block x y z w <block>`. `~` works, and so does `^left ^up ^forward ^ana` (along your view, through your zw rotation). `~` follows `/execute as`, `at` and `positioned` like vanilla, W included. Vanilla forms keep the W in a 4D world: `/tp <entity>` goes to that entity's full 4D position, `/tp x y z` and `/summon <entity> [x y z]` stay in the executor's W, and `/locate structure <village\|ruined portal\|igloo\|shipwreck>` finds the 4D structures. |
 | **Movement** | Vanilla's physics model ported to 4D: the same acceleration, friction, gravity order (a jump clears a full block), sprint-jump and sneak. Input is normalised across all three horizontal axes, so diagonals and W-strafing are never faster. |
 | **Fluids** | Rendered like vanilla, with sloped, smoothly connected surfaces (each corner averages its 4D neighbours). Flow follows vanilla's "toward the nearest drop" rule and drains when the source is removed. Caves are generated so they never open into lakes. |
 
@@ -73,6 +73,18 @@ the model fits exactly: at 0°/90°/180°/270° blocks look exactly like vanilla
 depth along the rotated axis. The selection outline is vanilla's own outline renderer drawing the block's real
 shape the same way.
 
+### Other mods (Jade, WTHIT, minimaps...)
+
+Tetraform publishes the 4D world through the standard vanilla client state, so mods that ask "what is the player
+looking at" or "what block is here" work without knowing about 4D:
+
+* `Minecraft.hitResult` and `crosshairPickEntity` hold the 4D crosshair target (block or creature), in the same
+  render-space coordinates as the camera.
+* On the render thread, `Level.getBlockState` / `getFluidState` answer from the slice you are looking at, so
+  ray traces like Jade's, particles, shadows and the camera's water check see 4D blocks.
+* The vanilla block outline is replaced by Tetraform's own (via `ExtractBlockOutlineRenderStateEvent`), since only
+  Tetraform knows the block's cut through the slice.
+
 ### Sodium / Iris compatibility
 
 **Supported pairing: Sodium 0.9.3-beta.1 + Iris 1.11.7** (the release Sodium 0.9.3 refuses Iris 1.11.7).
@@ -99,9 +111,18 @@ Tested in-game with Complementary Reimagined r5.10:
   section, never O(16⁴). Faces are culled across all 8 directions. Slicing allocates nothing per face.
 * Remeshing happens only when the hyperplane changes. Axis-aligned slices change only when you cross an
   integer W. Block updates remesh only the sections they project into.
-* **Mesh cache (memory for speed):** finished section meshes are kept (up to a quarter of the heap, at most
-  3 GB) and keyed by slice angle, depth and offset. Snapping back to an angle you have used, or strafing back
-  along W, replays the stored geometry instead of slicing again. F3 shows its size.
+* **Mesh cache, like vanilla's compiled chunks:** the slice is cut into 16³ *cells* in its own coordinates
+  (independent of where they land on screen) and each finished cell is kept, keyed by angle, depth and a stamp
+  of the 4D columns that can affect it (up to a quarter of the heap, at most 3 GB). Turning back to an angle you
+  have seen, snapping to it, or stepping back along W copies stored geometry instead of slicing again, and an
+  edit only invalidates the cells near it.
+* **Background slicing with honest loading:** after a turn or teleport, any cell not cached yet is built on
+  background threads and shows as empty space until it's ready, nearest first, the way vanilla chunks stream in
+  after a teleport. The old slice is never left on screen. While you hold still, the workers fill in the rest of
+  the slice within render distance (so looking around after a turn is instant) and then the slices you are
+  likely to see next: the next rotation steps in the direction you last turned and one step either way along W.
+  Small depth steps while walking keep the previous mesh until the new one is ready, since it is nearly the same
+  picture. F3 shows the cache size and the queue.
 * **Bigger preload:** the full 4D neighbourhood within 3 columns (all of x, z and w) stays loaded, so rotating
   into W or strafing along W doesn't wait for terrain to stream. `preloadRadius` in `tetraform-synced.toml`
   goes up to 6 (4 suits 16 GB).
@@ -185,8 +206,12 @@ To build locally:
 * Structures appear only in terrain generated with this version. Chests in structures are empty (no loot
   tables yet), structure processors (mossy variation, crops) are skipped, and villagers have no beds or job
   sites to claim, so they just wander. Maps are not 4D-aware.
-* While zw changes, all visible sections rebuild (the chunk mesher has no per-frame path). With Sodium this
-  is quick, but during fast turns, distant sections can lag a moment behind nearby ones.
+* A slice you have never seen still has to be cut once: during a fast first turn, distant terrain appears a
+  moment after nearby terrain (empty until then, never stale).
+* Villages generated before this version keep their bare dirt street tiles (template air used to be written into
+  the terrain); new terrain is generated correctly.
+* Jade and similar mods see blocks and creatures through vanilla's own state, but server-side details (chest
+  contents, furnace progress) don't reach them yet, because the server's vanilla chunks don't hold 4D blocks.
 * Upgrading from 0.1.0: the key-binding ids changed so the new defaults apply; earlier custom bindings for
   Tetraform keys need to be set again.
 * Worlds created before this version can contain caves that open into lakes, and those can still flood if

@@ -48,7 +48,10 @@ public final class Commands4 {
         d.register(Commands.literal("setblock").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .then(Commands.argument("pos4", Pos4Argument.pos4())
                         .then(Commands.argument("block", BlockStateArgument.block(ctx))
-                                .executes(c -> setblock(c, BlockStateArgument.getBlock(c, "block"))))));
+                                .executes(c -> setblock(c, BlockStateArgument.getBlock(c, "block"), Mode.REPLACE))
+                                .then(Commands.literal("replace").executes(c -> setblock(c, BlockStateArgument.getBlock(c, "block"), Mode.REPLACE)))
+                                .then(Commands.literal("keep").executes(c -> setblock(c, BlockStateArgument.getBlock(c, "block"), Mode.KEEP)))
+                                .then(Commands.literal("destroy").executes(c -> setblock(c, BlockStateArgument.getBlock(c, "block"), Mode.DESTROY))))));
 
         d.register(Commands.literal("fill").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .then(Commands.argument("from4", Pos4Argument.pos4())
@@ -60,24 +63,43 @@ public final class Commands4 {
                                                         .executes(c -> fill(c, Mode.REPLACE, BlockPredicateArgument.getBlockPredicate(c, "filter")))))
                                         .then(Commands.literal("keep").executes(c -> fill(c, Mode.KEEP, null)))
                                         .then(Commands.literal("hollow").executes(c -> fill(c, Mode.HOLLOW, null)))
-                                        .then(Commands.literal("outline").executes(c -> fill(c, Mode.OUTLINE, null)))))));
+                                        .then(Commands.literal("outline").executes(c -> fill(c, Mode.OUTLINE, null)))
+                                        .then(Commands.literal("destroy").executes(c -> fill(c, Mode.DESTROY, null)))))));
 
+        // /clone begin end destination [replace|masked|filtered <filter>] [force|move|normal], all with 4 coordinates
+        var cloneDest = Commands.argument("destination4", Pos4Argument.pos4()).executes(c -> clone(c, null, false, false));
+        for (String mask : new String[]{"replace", "masked"}) {
+            boolean masked = mask.equals("masked");
+            var m = Commands.literal(mask).executes(c -> clone(c, null, masked, false));
+            for (String mode : new String[]{"force", "move", "normal"}) {
+                boolean move = mode.equals("move");
+                m.then(Commands.literal(mode).executes(c -> clone(c, null, masked, move)));
+            }
+            cloneDest.then(m);
+        }
+        var filtered = Commands.argument("filter", BlockPredicateArgument.blockPredicate(ctx))
+                .executes(c -> clone(c, BlockPredicateArgument.getBlockPredicate(c, "filter"), false, false));
+        for (String mode : new String[]{"force", "move", "normal"}) {
+            boolean move = mode.equals("move");
+            filtered.then(Commands.literal(mode).executes(c -> clone(c, BlockPredicateArgument.getBlockPredicate(c, "filter"), false, move)));
+        }
+        cloneDest.then(Commands.literal("filtered").then(filtered));
         d.register(Commands.literal("clone").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .then(Commands.argument("begin4", Pos4Argument.pos4())
-                        .then(Commands.argument("end4", Pos4Argument.pos4())
-                                .then(Commands.argument("destination4", Pos4Argument.pos4()).executes(Commands4::clone)))));
+                        .then(Commands.argument("end4", Pos4Argument.pos4()).then(cloneDest))));
 
+        // "targets" takes any entities like vanilla (it used to be players only, so /execute as <mob> run tp @s ... failed)
         for (String name : new String[]{"tp", "teleport"}) {
             d.register(Commands.literal(name).requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                     .then(Commands.argument("location4", Pos4Argument.pos4())
-                            .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"), null))
+                            .executes(c -> tp(c, List.of(c.getSource().getEntityOrException()), Pos4Argument.getVec(c, "location4"), null))
                             .then(Commands.argument("rotation4", Rot3Argument.rot3())
-                                    .executes(c -> tp(c, List.of(c.getSource().getPlayerOrException()), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))
-                    .then(Commands.argument("targets", EntityArgument.players())
+                                    .executes(c -> tp(c, List.of(c.getSource().getEntityOrException()), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))
+                    .then(Commands.argument("targets", EntityArgument.entities())
                             .then(Commands.argument("location4", Pos4Argument.pos4())
-                                    .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"), null))
+                                    .executes(c -> tp(c, EntityArgument.getEntities(c, "targets"), Pos4Argument.getVec(c, "location4"), null))
                                     .then(Commands.argument("rotation4", Rot3Argument.rot3())
-                                            .executes(c -> tp(c, EntityArgument.getPlayers(c, "targets"), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))));
+                                            .executes(c -> tp(c, EntityArgument.getEntities(c, "targets"), Pos4Argument.getVec(c, "location4"), Rot3Argument.get(c, "rotation4")))))));
         }
 
         // merged into vanilla's "/summon <entity>" node: a 4-number position spawns any vanilla entity in 4D
@@ -113,11 +135,88 @@ public final class Commands4 {
                 .then(Commands.literal("fluids").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(Commands4::fluids))
                 );
 
+        registerExecuteIfBlock(d, ctx);
+
         // Make the 4D branches win over vanilla's when both parse the same input (e.g. "tp 1 2 3 4").
         for (String root : new String[]{"setblock", "fill", "clone", "tp", "teleport", "summon"}) {
             CommandNode<CommandSourceStack> node = d.getRoot().getChild(root);
             if (node != null) prioritize(node);
         }
+
+        // Vanilla forms that take no 4D coordinates still have to keep the W in a 4D world.
+        wrapVanilla(d, Commands4::tpToEntity, "teleport", "destination");
+        wrapVanilla(d, Commands4::tpToEntity, "teleport", "targets", "destination");
+        wrapVanilla(d, c -> tp3(c, false, false), "teleport", "location");
+        wrapVanilla(d, c -> tp3(c, true, false), "teleport", "targets", "location");
+        wrapVanilla(d, c -> tp3(c, true, true), "teleport", "targets", "location", "rotation");
+        wrapVanilla(d, c -> summonHere(c, false, false), "summon", "entity");
+        wrapVanilla(d, c -> summonHere(c, true, false), "summon", "entity", "pos");
+        wrapVanilla(d, c -> summonHere(c, true, true), "summon", "entity", "pos", "nbt");
+        wrapVanilla(d, Commands4::locateVanilla, "locate", "structure", "structure");
+    }
+
+    // ------------------------------------------------------------------ vanilla integration
+
+    /**
+     * Replaces the command on an existing vanilla node: inside a 4D world {@code fourD} runs, anywhere else the
+     * original vanilla command does. The node, its argument type and its suggestions stay vanilla's.
+     */
+    private static void wrapVanilla(CommandDispatcher<CommandSourceStack> d, com.mojang.brigadier.Command<CommandSourceStack> fourD, String... path) {
+        CommandNode<CommandSourceStack> node = d.getRoot();
+        for (String p : path) {
+            node = node == null ? null : node.getChild(p);
+        }
+        if (node == null || node.getCommand() == null) {
+            Tetraform.LOGGER.warn("Vanilla command node /{} not found; its 4D form is unavailable", String.join(" ", path));
+            return;
+        }
+        com.mojang.brigadier.Command<CommandSourceStack> vanilla = node.getCommand();
+        com.mojang.brigadier.Command<CommandSourceStack> wrapped = c -> Tetraform.is4D(c.getSource().getLevel()) ? fourD.run(c) : vanilla.run(c);
+        try {
+            Field f = CommandNode.class.getDeclaredField("command");
+            f.setAccessible(true);
+            f.set(node, wrapped);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            Tetraform.LOGGER.warn("Could not add the 4D form of /{}: {}", String.join(" ", path), e.toString());
+        }
+    }
+
+    private static final com.mojang.brigadier.exceptions.SimpleCommandExceptionType CONDITION_FAILED =
+            new com.mojang.brigadier.exceptions.SimpleCommandExceptionType(Component.translatable("commands.execute.conditional.fail"));
+
+    /** {@code /execute if|unless block x y z w <block>}: tests the 4D world (vanilla would read the empty 3D chunks). */
+    private static void registerExecuteIfBlock(CommandDispatcher<CommandSourceStack> d, CommandBuildContext ctx) {
+        CommandNode<CommandSourceStack> execute = d.getRoot().getChild("execute");
+        if (execute == null) return;
+        for (String word : new String[]{"if", "unless"}) {
+            boolean expected = word.equals("if");
+            CommandNode<CommandSourceStack> blockNode = execute.getChild(word) == null ? null : execute.getChild(word).getChild("block");
+            if (blockNode == null) continue;
+            var arg = Commands.argument("pos4", Pos4Argument.pos4())
+                    .then(Commands.argument("block", BlockPredicateArgument.blockPredicate(ctx))
+                            .fork(execute, c -> testBlock(c) == expected ? List.of(c.getSource()) : List.of())
+                            .executes(c -> {
+                                if (testBlock(c) != expected) throw CONDITION_FAILED.create();
+                                c.getSource().sendSuccess(() -> Component.translatable("commands.execute.conditional.pass"), false);
+                                return 1;
+                            }));
+            blockNode.addChild(arg.build());
+            prioritize(blockNode);
+        }
+    }
+
+    private static boolean testBlock(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerWorld4 w = world(c);
+        BlockPos4 p = Pos4Argument.getVec(c, "pos4").toBlockPos();
+        w.loadNow(p.x() >> 4, p.z() >> 4, p.w() >> 4);
+        BlockState s = w.getBlock(p);
+        return BlockPredicateArgument.getBlockPredicate(c, "block").test(inWorld(c, s));
+    }
+
+    private static BlockInWorld inWorld(CommandContext<CommandSourceStack> c, BlockState s) {
+        return new BlockInWorld(c.getSource().getLevel(), net.minecraft.core.BlockPos.ZERO, false) {
+            @Override public BlockState getState() { return s; }
+        };
     }
 
 
@@ -151,16 +250,38 @@ public final class Commands4 {
 
     // ------------------------------------------------------------------ implementations
 
-    private static ServerWorld4 world(CommandContext<CommandSourceStack> c) {
+    private static final com.mojang.brigadier.exceptions.SimpleCommandExceptionType NO_4D =
+            new com.mojang.brigadier.exceptions.SimpleCommandExceptionType(Component.literal("No four-dimensional world is loaded"));
+
+    private static ServerWorld4 world(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
         ServerWorld4 w = ServerWorld4.defaultFor(c.getSource().getServer(), c.getSource().getLevel());
-        if (w == null) throw new IllegalStateException("No four-dimensional world is loaded");
+        if (w == null) throw NO_4D.create();
         return w;
     }
 
-    private static int setblock(CommandContext<CommandSourceStack> c, BlockInput block) {
+    /** Vanilla's "destroy": drop what the old block would drop (in the block's own W slice), then replace it. */
+    private static void destroyDrops(ServerWorld4 w, BlockPos4 p) {
+        BlockState old = w.getBlock(p);
+        if (old.isAir() || !old.getFluidState().isEmpty()) return;
+        var prev = dev.tetraform.world.Access4.push(dev.tetraform.world.Access4.server(w, p.w() + 0.5));
+        try {
+            for (var stack : net.minecraft.world.level.block.Block.getDrops(old, w.serverLevel(), new net.minecraft.core.BlockPos(p.x(), p.y(), p.z()), null)) {
+                w.dropItem(p.center(), stack);
+            }
+        } finally {
+            dev.tetraform.world.Access4.pop(prev);
+        }
+    }
+
+    private static int setblock(CommandContext<CommandSourceStack> c, BlockInput block, Mode mode) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
         BlockPos4 p = Pos4Argument.getVec(c, "pos4").toBlockPos();
         w.loadNow(p.x() >> 4, p.z() >> 4, p.w() >> 4);
+        if (mode == Mode.KEEP && !w.getBlock(p).isAir()) {
+            c.getSource().sendFailure(Component.translatable("commands.setblock.failed"));
+            return 0;
+        }
+        if (mode == Mode.DESTROY) destroyDrops(w, p);
         if (!w.setBlock(p, block.getState(), true)) {
             c.getSource().sendFailure(Component.literal("Could not set the block (unchanged or out of bounds)"));
             return 0;
@@ -169,9 +290,9 @@ public final class Commands4 {
         return 1;
     }
 
-    private enum Mode { REPLACE, KEEP, HOLLOW, OUTLINE }
+    private enum Mode { REPLACE, KEEP, HOLLOW, OUTLINE, DESTROY }
 
-    private static int fill(CommandContext<CommandSourceStack> c, Mode mode, Predicate<BlockInWorld> filter) {
+    private static int fill(CommandContext<CommandSourceStack> c, Mode mode, Predicate<BlockInWorld> filter) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
         BlockPos4 a = Pos4Argument.getVec(c, "from4").toBlockPos();
         BlockPos4 b = Pos4Argument.getVec(c, "to4").toBlockPos();
@@ -196,10 +317,9 @@ public final class Commands4 {
                 case KEEP -> { if (!w.getBlock(p).isAir()) continue; }
                 case HOLLOW -> { if (!border) target = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(); }
                 case OUTLINE -> { if (!border) continue; }
+                case DESTROY -> destroyDrops(w, p);
                 case REPLACE -> {
-                    if (filter != null && !filter.test(new BlockInWorld(c.getSource().getLevel(), net.minecraft.core.BlockPos.ZERO, false) {
-                        @Override public BlockState getState() { return w.getBlock(p); }
-                    })) continue;
+                    if (filter != null && !filter.test(inWorld(c, w.getBlock(p)))) continue;
                 }
             }
             if (w.setBlock(p, target, notify)) changed++;
@@ -209,7 +329,7 @@ public final class Commands4 {
         return n;
     }
 
-    private static int clone(CommandContext<CommandSourceStack> c) {
+    private static int clone(CommandContext<CommandSourceStack> c, Predicate<BlockInWorld> filter, boolean masked, boolean move) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
         BlockPos4 a = Pos4Argument.getVec(c, "begin4").toBlockPos();
         BlockPos4 b = Pos4Argument.getVec(c, "end4").toBlockPos();
@@ -228,38 +348,129 @@ public final class Commands4 {
             w.loadNow(p.x() >> 4, p.z() >> 4, p.w() >> 4);
             buf[i++] = w.getBlock(p);
         }
+        boolean[] copied = new boolean[(int) volume];
+        i = 0;
+        for (int k = 0; k < buf.length; k++) {
+            boolean take = !masked || !buf[k].isAir();
+            if (take && filter != null && !filter.test(inWorld(c, buf[k]))) take = false;
+            copied[k] = take;
+        }
+        // "move": the source becomes air where something was copied (cleared first, so overlapping moves work)
+        if (move) {
+            for (int dw = 0; dw < sw; dw++) for (int dz = 0; dz < sz; dz++) for (int dy = 0; dy < sy; dy++) for (int dx = 0; dx < sx; dx++) {
+                if (!copied[i++]) continue;
+                w.setBlock(new BlockPos4(x0 + dx, y0 + dy, z0 + dz, w0 + dw), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), volume <= 4096);
+            }
+        }
         i = 0;
         int changed = 0;
         for (int dw = 0; dw < sw; dw++) for (int dz = 0; dz < sz; dz++) for (int dy = 0; dy < sy; dy++) for (int dx = 0; dx < sx; dx++) {
+            int k = i++;
+            if (!copied[k]) continue;
             BlockPos4 p = new BlockPos4(dst.x() + dx, dst.y() + dy, dst.z() + dz, dst.w() + dw);
             w.loadNow(p.x() >> 4, p.z() >> 4, p.w() >> 4);
-            if (w.setBlock(p, buf[i++], volume <= 4096)) changed++;
+            if (w.setBlock(p, buf[k], volume <= 4096)) changed++;
         }
         int n = changed;
         c.getSource().sendSuccess(() -> Component.literal("Successfully cloned " + n + " block(s)"), true);
         return n;
     }
 
-    private static int tp(CommandContext<CommandSourceStack> c, Collection<ServerPlayer> players, Vec4 to, Rot3Argument.Rot rot) {
+    /** 4D teleport of any entities: players through their 4D state, other entities by vanilla position plus W. */
+    private static int tp(CommandContext<CommandSourceStack> c, Collection<? extends net.minecraft.world.entity.Entity> targets, Vec4 to,
+                          Rot3Argument.Rot rot) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
-        for (ServerPlayer p : players) {
-            if (rot == null) {
-                w.teleport(p, to, null);
+        for (net.minecraft.world.entity.Entity e : targets) {
+            float yaw = rot == null ? e.getYRot() : (float) rot.yaw(e.getYRot());
+            float pitch = rot == null ? e.getXRot() : (float) Math.max(-90, Math.min(90, rot.pitch(e.getXRot())));
+            if (e instanceof ServerPlayer p) {
+                if (rot == null) {
+                    w.teleport(p, to, null);
+                } else {
+                    PlayerState4 st = ServerWorld4.state(p);
+                    double zw = Math.toRadians(rot.zw(Math.toDegrees(st.frame.zwAngle())));
+                    w.teleport(p, to, SliceFrame.zw(zw), yaw, pitch);
+                }
             } else {
-                PlayerState4 st = ServerWorld4.state(p);
-                float yaw = (float) rot.yaw(p.getYRot());
-                float pitch = (float) Math.max(-90, Math.min(90, rot.pitch(p.getXRot())));
-                double zw = Math.toRadians(rot.zw(Math.toDegrees(st.frame.zwAngle())));
-                w.teleport(p, to, SliceFrame.zw(zw), yaw, pitch);
+                w.loadNow((int) Math.floor(to.x()) >> 4, (int) Math.floor(to.z()) >> 4, (int) Math.floor(to.w()) >> 4);
+                dev.tetraform.world.W4.set(e, to.w());
+                e.teleportTo(w.serverLevel(), to.x(), to.y(), to.z(), Set.of(), yaw, pitch, true);
+                // teleportTo across dimensions makes a new entity; give it the W as well
+                for (var moved : w.serverLevel().getEntities((net.minecraft.world.entity.Entity) null,
+                        net.minecraft.world.phys.AABB.ofSize(new net.minecraft.world.phys.Vec3(to.x(), to.y(), to.z()), 0.01, 0.01, 0.01).inflate(1),
+                        x -> x.getUUID().equals(e.getUUID()))) dev.tetraform.world.W4.set(moved, to.w());
             }
         }
-        c.getSource().sendSuccess(() -> Component.literal("Teleported " + players.size() + " player(s) to " + to
-                + (rot == null ? "" : " facing (yaw / pitch / zw)")), true);
-        return players.size();
+        if (targets.size() == 1) {
+            var only = targets.iterator().next();
+            c.getSource().sendSuccess(() -> Component.literal("Teleported ").append(only.getDisplayName()).append(" to " + to
+                    + (rot == null ? "" : " facing (yaw / pitch / zw)")), true);
+        } else {
+            c.getSource().sendSuccess(() -> Component.literal("Teleported " + targets.size() + " entities to " + to
+                    + (rot == null ? "" : " facing (yaw / pitch / zw)")), true);
+        }
+        return targets.size();
+    }
+
+    /** {@code /tp <destination>} and {@code /tp <targets> <destination>}: to the destination's full 4D position. */
+    private static int tpToEntity(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        net.minecraft.world.entity.Entity dest = EntityArgument.getEntity(c, "destination");
+        Collection<? extends net.minecraft.world.entity.Entity> targets = hasArg(c, "targets")
+                ? EntityArgument.getEntities(c, "targets") : List.of(c.getSource().getEntityOrException());
+        Vec4 to = Pos4Argument.pos4(dest);
+        if (!Tetraform.is4D(dest.level())) to = new Vec4(dest.getX(), dest.getY(), dest.getZ(), 0.5);
+        return tp(c, targets, to, null);
+    }
+
+    /** The 3-coordinate vanilla forms in a 4D world: x, y and z as vanilla parses them, W stays the source's. */
+    private static int tp3(CommandContext<CommandSourceStack> c, boolean withTargets, boolean withRotation) throws CommandSyntaxException {
+        Collection<? extends net.minecraft.world.entity.Entity> targets = withTargets
+                ? EntityArgument.getEntities(c, "targets") : List.of(c.getSource().getEntityOrException());
+        var v = net.minecraft.commands.arguments.coordinates.Vec3Argument.getCoordinates(c, "location").getPosition(c.getSource());
+        Vec4 to = new Vec4(v.x, v.y, v.z, Pos4Argument.origin(c.getSource()).w());
+        Rot3Argument.Rot rot = null;
+        if (withRotation) {
+            var r = net.minecraft.commands.arguments.coordinates.RotationArgument.getRotation(c, "rotation").getRotation(c.getSource());
+            rot = new Rot3Argument.Rot(new double[]{r.y, r.x, 0}, new boolean[]{false, false, true});
+        }
+        return tp(c, targets, to, rot);
+    }
+
+    /** {@code /summon <entity>} and {@code /summon <entity> x y z [nbt]} in a 4D world: spawned in the source's W. */
+    private static int summonHere(CommandContext<CommandSourceStack> c, boolean withPos, boolean withNbt) throws CommandSyntaxException {
+        var type = net.minecraft.commands.arguments.ResourceArgument.getSummonableEntityType(c, "entity").value();
+        Vec4 o = Pos4Argument.origin(c.getSource());
+        Vec4 pos = o;
+        if (withPos) {
+            var v = net.minecraft.commands.arguments.coordinates.Vec3Argument.getVec3(c, "pos");
+            pos = new Vec4(v.x, v.y, v.z, o.w());
+        }
+        return summon(c, type, pos, withNbt ? net.minecraft.commands.arguments.CompoundTagArgument.getCompoundTag(c, "nbt") : null);
+    }
+
+    /** Vanilla {@code /locate structure <id>} finds the 4D structures (vanilla's 3D ones don't generate there). */
+    private static int locateVanilla(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        String id = c.getArgument("structure", net.minecraft.commands.arguments.ResourceOrTagKeyArgument.Result.class).asPrintable();
+        String kind = id.contains("village") ? "village" : id.contains("ruined_portal") ? "ruined_portal"
+                : id.contains("igloo") ? "igloo" : id.contains("shipwreck") ? "shipwreck" : null;
+        if (kind == null) {
+            c.getSource().sendFailure(Component.literal(id + " does not generate in the 4D world (villages, ruined portals, igloos and shipwrecks do)"));
+            return 0;
+        }
+        return locate(c, kind);
+    }
+
+    private static boolean hasArg(CommandContext<CommandSourceStack> c, String name) {
+        try {
+            c.getArgument(name, Object.class);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private static int summon(CommandContext<CommandSourceStack> c, net.minecraft.world.entity.EntityType<?> type, Vec4 pos,
-                              net.minecraft.nbt.CompoundTag nbt) {
+                              net.minecraft.nbt.CompoundTag nbt) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
         w.loadNow((int) Math.floor(pos.x()) >> 4, (int) Math.floor(pos.z()) >> 4, (int) Math.floor(pos.w()) >> 4);
         var e = w.spawn(type, pos, net.minecraft.world.entity.EntitySpawnReason.COMMAND, nbt);
@@ -329,7 +540,7 @@ public final class Commands4 {
         return 1;
     }
 
-    private static int explode(CommandContext<CommandSourceStack> c, float power) {
+    private static int explode(CommandContext<CommandSourceStack> c, float power) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
         Vec4 pos = Pos4Argument.getVec(c, "pos4");
         w.explodeAt(pos, power);
@@ -377,7 +588,7 @@ public final class Commands4 {
     }
 
     /** Debug: a block and its eight 4D neighbours. */
-    private static int probe(CommandContext<CommandSourceStack> c) {
+    private static int probe(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
         BlockPos4 bp = Pos4Argument.getVec(c, "pos4").toBlockPos();
         for (int dw = -1; dw <= 1; dw++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
@@ -390,7 +601,7 @@ public final class Commands4 {
     }
 
     /** Debug: follows the strongest horizontal water neighbour until a source/falling block. */
-    private static int trace(CommandContext<CommandSourceStack> c) {
+    private static int trace(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
         ServerWorld4 w = world(c);
         BlockPos4 bp = Pos4Argument.getVec(c, "pos4").toBlockPos();
         StringBuilder sb = new StringBuilder();

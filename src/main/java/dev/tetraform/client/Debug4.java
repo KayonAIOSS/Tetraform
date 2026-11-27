@@ -56,8 +56,8 @@ public final class Debug4 {
         lines.add(String.format(Locale.ROOT, "Slice: zw %.1f° normal (%.3f, %.3f, %.3f, %.3f) depth %.3f",
                 Math.toDegrees(ClientState4.zw), n.x() + 0.0, n.y() + 0.0, n.z() + 0.0, n.w() + 0.0, ClientState4.FRAME.depthOf(p) + 0.0));
         lines.add(mc.level.dimension().identifier() + " (4D) Columns: " + ClientState4.LEVEL.columns().size());
-        lines.add(String.format(Locale.ROOT, "Mesh cache: %d sections, %.1f MB", dev.tetraform.client.render.MeshCache.size(),
-                dev.tetraform.client.render.MeshCache.usedBytes() / 1048576.0));
+        lines.add(String.format(Locale.ROOT, "Mesh cache: %d cells, %.1f MB, %d queued", dev.tetraform.client.render.MeshCache.size(),
+                dev.tetraform.client.render.MeshCache.usedBytes() / 1048576.0, dev.tetraform.client.render.MeshWorkers.queued()));
         int total = 0, inSlice = 0;
         net.minecraft.world.entity.Entity near = null;
         double nd = Double.MAX_VALUE;
