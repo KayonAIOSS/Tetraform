@@ -130,7 +130,8 @@ public final class Net4 {
 
     public static final byte ACTION_BREAK = 0, ACTION_PLACE = 1, ACTION_USE = 2, ACTION_ATTACK = 3, ACTION_PICK = 4, ACTION_USE_ENTITY = 5;
 
-    public record Action4C2S(byte action, int x, int y, int z, int w, byte face, int entityId) implements CustomPacketPayload {
+    /** hitX/Y/Z: where on the block the crosshair hit, in [0, 1] block-local x, y, z (vanilla uses it for slabs, stairs...). */
+    public record Action4C2S(byte action, int x, int y, int z, int w, byte face, int entityId, float hitX, float hitY, float hitZ) implements CustomPacketPayload {
         public static final Type<Action4C2S> TYPE = typeOf("action4");
         public static final StreamCodec<RegistryFriendlyByteBuf, Action4C2S> CODEC = StreamCodec.of(
                 (buf, v) -> {
@@ -138,8 +139,15 @@ public final class Net4 {
                     buf.writeVarInt(v.x); buf.writeVarInt(v.y); buf.writeVarInt(v.z); buf.writeVarInt(v.w);
                     buf.writeByte(v.face);
                     buf.writeVarInt(v.entityId);
+                    buf.writeFloat(v.hitX); buf.writeFloat(v.hitY); buf.writeFloat(v.hitZ);
                 },
-                buf -> new Action4C2S(buf.readByte(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readByte(), buf.readVarInt()));
+                buf -> {
+                    byte action = buf.readByte();
+                    int x = buf.readVarInt(), y = buf.readVarInt(), z = buf.readVarInt(), w = buf.readVarInt();
+                    byte face = buf.readByte();
+                    int entity = buf.readVarInt();
+                    return new Action4C2S(action, x, y, z, w, face, entity, buf.readFloat(), buf.readFloat(), buf.readFloat());
+                });
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 

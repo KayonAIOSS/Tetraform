@@ -34,6 +34,8 @@ public final class Movement4 {
 
     public static void tick(LocalPlayer player, ClientInput input) {
         Input in = input.keyPresses;
+        // a firework attached to a gliding player pushes its vanilla motion (which is otherwise always zero here)
+        boolean fireworkBoost = player.isFallFlying() && player.getDeltaMovement().lengthSqr() > 0.09;
         // Neutralize vanilla movement (it is replaced by 4D movement below). Keep shift for the sneak pose.
         input.keyPresses = new Input(false, false, false, false, false, in.shift(), false);
         ((ClientInputAccessor) input).tetraform$setMoveVector(Vec2.ZERO);
@@ -64,7 +66,17 @@ public final class Movement4 {
             }
         }
         if (jumpTapTimer > 0) jumpTapTimer--;
+        // Elytra: a fresh jump press in mid-air starts gliding, exactly like vanilla's LocalPlayer.aiStep
+        if (jump && !lastJump && !abilities.flying && !ClientState4.onGround && !player.isFallFlying()
+                && !ClientState4.LEVEL.isFluidAt(pos.add(0, 0.4, 0, 0)) && player.tryToStartFallFlying()) {
+            player.connection.send(new net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket(player,
+                    net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
+        }
         lastJump = jump;
+        if (player.isFallFlying() && !abilities.flying) {
+            glide(player, pos, fireworkBoost);
+            return;
+        }
         if (!abilities.mayfly && abilities.flying) abilities.flying = false;
         boolean flying = abilities.flying;
 
@@ -150,6 +162,55 @@ public final class Movement4 {
             abilities.flying = false;
             player.onUpdateAbilities();
         }
+        mirror(player);
+        sendState(player);
+    }
+
+    /**
+     * Vanilla elytra flight (LivingEntity.updateFallFlyingMovement) in 4D: "horizontal" is the whole (x, z, w)
+     * space and the look direction goes through the zw rotation, so you can glide through W. Fireworks boost along
+     * the 4D look direction with vanilla's formula.
+     */
+    private static void glide(LocalPlayer player, Vec4 pos, boolean firework) {
+        Vec4 look = ClientState4.FRAME.lookDirection(player.getYRot(), player.getXRot());
+        Vec4 v = ClientState4.vel.add(pendingImpulse);
+        pendingImpulse = Vec4.ZERO;
+        if (firework) {
+            v = v.add(look.scale(0.1)).add(look.scale(1.5).sub(v).scale(0.5));
+        }
+        double vx = v.x(), vy = v.y(), vz = v.z(), vw = v.w();
+        double lean = Math.toRadians(player.getXRot());
+        double lookHor = Math.sqrt(look.x() * look.x() + look.z() * look.z() + look.w() * look.w());
+        double moveHor = Math.sqrt(vx * vx + vz * vz + vw * vw);
+        double gravity = 0.08;
+        double lift = Math.cos(lean) * Math.cos(lean);
+        vy += gravity * (-1.0 + lift * 0.75);
+        if (vy < 0 && lookHor > 0) {
+            double convert = vy * -0.1 * lift;
+            vx += look.x() * convert / lookHor; vz += look.z() * convert / lookHor; vw += look.w() * convert / lookHor;
+            vy += convert;
+        }
+        if (lean < 0 && lookHor > 0) {
+            double convert = moveHor * -Math.sin(lean) * 0.04;
+            vx -= look.x() * convert / lookHor; vz -= look.z() * convert / lookHor; vw -= look.w() * convert / lookHor;
+            vy += convert * 3.2;
+        }
+        if (lookHor > 0) {
+            vx += (look.x() / lookHor * moveHor - vx) * 0.1;
+            vz += (look.z() / lookHor * moveHor - vz) * 0.1;
+            vw += (look.w() / lookHor * moveHor - vw) * 0.1;
+        }
+        vx *= 0.99; vy *= 0.98; vz *= 0.99; vw *= 0.99;
+        AABB4 box = AABB4.ofCenterBottom(pos, 0.3, 0.6);
+        Physics4.Result r = Physics4.move(ClientState4.LEVEL, box, new Vec4(vx, vy, vz, vw), 0, false);
+        Vec4 d = r.delta();
+        ClientState4.pos = pos.add(d);
+        ClientState4.onGround = r.onGround();
+        if (d.x() != vx) vx = 0;
+        if (d.z() != vz) vz = 0;
+        if (d.w() != vw) vw = 0;
+        if (r.verticalCollision()) vy = 0;
+        ClientState4.vel = new Vec4(vx, vy, vz, vw);
         mirror(player);
         sendState(player);
     }

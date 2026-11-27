@@ -13,6 +13,8 @@ public final class Column4 {
     public final int cx, cz, cw;
     /** Entities a freshly generated column spawns once (structure villagers, animals); never saved. */
     public java.util.List<Structures4.PendingEntity> pendingEntities;
+    /** Block entity data from structure templates (chest loot tables, spawner mobs), keyed by 4D position; never saved. */
+    public java.util.Map<Long, net.minecraft.nbt.CompoundTag> pendingBlockEntities;
     private final Section4[] sections = new Section4[SECTIONS];
     /** Index (w<<8 | z<<4 | x): y of the topmost opaque block + 1 (0 if none). */
     private final short[] heightmap = new short[4096];

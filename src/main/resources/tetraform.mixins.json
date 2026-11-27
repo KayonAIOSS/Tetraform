@@ -13,7 +13,14 @@
     "ProjectileSliceMixin",
     "PlayerTouchSliceMixin",
     "MobAttackSliceMixin",
-    "StructureTemplateAccessor"
+    "StructureTemplateAccessor",
+    "EntityTracking4Mixin",
+    "ServerLevel4Mixin",
+    "ServerPlayerRespawn4Mixin",
+    "Portals4Mixin",
+    "PortalForcer4Mixin",
+    "Strongholds4Mixin",
+    "LightAccess4Mixin"
   ],
   "client": [
     "ClientInputAccessor",

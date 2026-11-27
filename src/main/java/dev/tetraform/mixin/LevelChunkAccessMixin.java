@@ -25,13 +25,13 @@ public abstract class LevelChunkAccessMixin {
 
     @Inject(method = "getBlockState", at = @At("HEAD"), cancellable = true)
     private void tetraform$getBlockState(BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
-        Access4.Mapper m = Access4.entityContextOnly();
+        Access4.Mapper m = Access4.entityContextOnly(); if (m != null && m.world() != null && m.world().serverLevel() != level) m = null;
         if (m != null) cir.setReturnValue(m.get(pos.getX(), pos.getY(), pos.getZ()));
     }
 
     @Inject(method = "getFluidState(III)Lnet/minecraft/world/level/material/FluidState;", at = @At("HEAD"), cancellable = true)
     private void tetraform$getFluidState(int x, int y, int z, CallbackInfoReturnable<FluidState> cir) {
-        Access4.Mapper m = Access4.entityContextOnly();
+        Access4.Mapper m = Access4.entityContextOnly(); if (m != null && m.world() != null && m.world().serverLevel() != level) m = null;
         if (m != null) cir.setReturnValue(m.get(x, y, z).getFluidState());
     }
 }

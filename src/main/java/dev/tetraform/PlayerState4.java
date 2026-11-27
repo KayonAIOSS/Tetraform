@@ -13,6 +13,8 @@ public final class PlayerState4 implements ValueIOSerializable {
     public boolean initialized;
     /** Dimension this 4D position belongs to. */
     public String dimension = "";
+    /** W of the player's respawn point (bed, respawn anchor, /spawnpoint) in a 4D level; NaN if none. */
+    public double spawnW = Double.NaN;
     /** Server tick of the last movement update; used for speed sanity checks. */
     public transient long lastUpdate;
     /**
@@ -20,6 +22,11 @@ public final class PlayerState4 implements ValueIOSerializable {
      * number and are ignored; otherwise one stale packet could undo a /tp (creative skips the speed check).
      */
     public transient int teleportSeq;
+    /**
+     * Until this game time, vanilla teleports don't move the 4D position: the 4D arrival point was already chosen
+     * (respawn, portals), and vanilla's 3D guess of the height would be wrong.
+     */
+    public transient long keep4DUntil;
 
     @Override
     public void serialize(ValueOutput out) {
@@ -31,6 +38,7 @@ public final class PlayerState4 implements ValueIOSerializable {
         for (int i = 0; i < 9; i++) out.putDouble("f" + i, m[i]);
         out.putBoolean("init", initialized);
         out.putString("dim", dimension);
+        if (!Double.isNaN(spawnW)) out.putDouble("spawnW", spawnW);
     }
 
     @Override
@@ -42,6 +50,7 @@ public final class PlayerState4 implements ValueIOSerializable {
         frame.orthonormalize();
         initialized = in.getBooleanOr("init", false);
         dimension = in.getStringOr("dim", "");
+        spawnW = in.getDoubleOr("spawnW", Double.NaN);
     }
 
     /** Vanilla (render-space) position of this player: the 4D position expressed in the slice frame. */

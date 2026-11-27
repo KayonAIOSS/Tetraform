@@ -71,13 +71,24 @@ public final class Tetraform {
     public static final DeferredHolder<ArgumentTypeInfo<?, ?>, SingletonArgumentInfo<dev.tetraform.command.Rot3Argument>> ROT3_ARG = ARGUMENTS.register("rot3",
             () -> ArgumentTypeInfos.registerByClass(dev.tetraform.command.Rot3Argument.class, SingletonArgumentInfo.contextFree(dev.tetraform.command.Rot3Argument::rot3)));
 
+    public static final DeferredRegister<net.minecraft.world.level.gamerules.GameRule<?>> GAME_RULES = DeferredRegister.create(Registries.GAME_RULE, MODID);
+
+    /** {@code /gamerule tetraform:creepers_spare_terrain}: creeper explosions don't break blocks (on by default). */
+    public static final DeferredHolder<net.minecraft.world.level.gamerules.GameRule<?>, net.minecraft.world.level.gamerules.GameRule<Boolean>> CREEPERS_SPARE_TERRAIN =
+            GAME_RULES.register("creepers_spare_terrain", () -> new net.minecraft.world.level.gamerules.GameRule<>(
+                    net.minecraft.world.level.gamerules.GameRuleCategory.MOBS, net.minecraft.world.level.gamerules.GameRuleType.BOOL,
+                    com.mojang.brigadier.arguments.BoolArgumentType.bool(), net.minecraft.world.level.gamerules.GameRuleTypeVisitor::visitBoolean,
+                    com.mojang.serialization.Codec.BOOL, b -> b ? 1 : 0, true, net.minecraft.world.flag.FeatureFlagSet.of()));
+
     public Tetraform(IEventBus modBus, ModContainer container) {
+        GAME_RULES.register(modBus);
         BLOCKS.register(modBus);
         ATTACHMENTS.register(modBus);
         ARGUMENTS.register(modBus);
         container.registerConfig(ModConfig.Type.SYNCED, Config4.SPEC);
         modBus.addListener(Net4::register);
         NeoForge.EVENT_BUS.register(ServerEvents4.class);
+        NeoForge.EVENT_BUS.register(dev.tetraform.world.Mobs4.class);
         NeoForge.EVENT_BUS.addListener(Commands4::register);
     }
 

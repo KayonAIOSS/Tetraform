@@ -41,6 +41,7 @@ public final class TetraformClient {
 
     private static void onClientTick(ClientTickEvent.Pre event) {
         Minecraft mc = Minecraft.getInstance();
+        if (DevSelfTest.ENABLED) DevSelfTest.tick(mc);
         boolean now = Tetraform.is4D(mc.level);
         if (ClientState4.active && !now) {
             ClientState4.reset();
@@ -59,8 +60,7 @@ public final class TetraformClient {
         while (mc.options.keyPickItem.consumeClick()) {
             if (player != null && ClientState4.target != null && ClientState4.targetEntity == null) Interaction4.pick();
         }
-        if (player != null && ClientState4.hasPos) Interaction4.tick(player);
-        if (DevSelfTest.ENABLED) DevSelfTest.tick(mc);
+        if (player != null && ClientState4.hasPos) Interaction4.tick(player);
     }
 
     private static long lastHint;

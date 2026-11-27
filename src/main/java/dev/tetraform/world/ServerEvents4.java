@@ -55,13 +55,25 @@ public final class ServerEvents4 {
     @SubscribeEvent
     public static void onRespawn(PlayerEvent.PlayerRespawnEvent event) {
         if (event.getEntity() instanceof ServerPlayer sp) {
+            // the 4D arrival point was chosen by the respawn lookup (bed, anchor or world spawn, see ServerPlayerRespawn4Mixin)
             ServerWorld4 w = ServerWorld4.get(sp.level());
-            if (w != null) {
-                PlayerState4 st = ServerWorld4.state(sp);
-                st.pos = w.findSurface(0.5, 0.5, 0.5);
-                w.onPlayerEnter(sp);
-            }
+            if (w != null) w.onPlayerEnter(sp);
         }
+    }
+
+    /** Remembers the W of a bed, respawn anchor or /spawnpoint in a 4D world. */
+    @SubscribeEvent
+    public static void onSetSpawn(net.neoforged.neoforge.event.entity.player.PlayerSetSpawnEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer sp)) return;
+        PlayerState4 st = ServerWorld4.state(sp);
+        if (event.getNewSpawn() == null) {
+            st.spawnW = Double.NaN;
+            return;
+        }
+        ServerLevel target = sp.level().getServer().getLevel(event.getSpawnLevel());
+        if (target == null || !Tetraform.is4D(target)) return;
+        Access4.Mapper ctx = Access4.serverContext(target);
+        st.spawnW = ctx != null ? ctx.w() : st.pos.w();
     }
 
     @SubscribeEvent
@@ -85,6 +97,12 @@ public final class ServerEvents4 {
     public static void onJoin(net.neoforged.neoforge.event.entity.EntityJoinLevelEvent event) {
         var e = event.getEntity();
         if (event.getLevel().isClientSide() || !Tetraform.is4D(event.getLevel()) || W4.has(e)) return;
+        // spawned by something running in a slice (a spawner, breeding, a block, a mob's own tick): that slice's W
+        Access4.Mapper ctx = Access4.serverContext();
+        if (ctx != null && !(e instanceof ServerPlayer)) {
+            W4.set(e, ctx.w());
+            return;
+        }
         net.minecraft.world.entity.Entity owner = null;
         if (e instanceof net.minecraft.world.entity.projectile.Projectile pr) owner = pr.getOwner();
         else if (e instanceof net.minecraft.world.entity.item.ItemEntity it) owner = it.getOwner();

@@ -50,13 +50,54 @@ public final class Behaviors4 {
 
     // ------------------------------------------------------------------ dispatch
 
+    /**
+     * Blocks whose 4D behaviour this class implements itself (gravity, fluids, redstone dust, torches and lamps,
+     * TNT, command blocks). Vanilla's 3D logic for them would fight the 4D version. Every other block, including
+     * modded ones, runs its vanilla logic in its own W slice.
+     */
+    public static boolean custom4D(Block b) {
+        return b instanceof FallingBlock || b instanceof LiquidBlock || b instanceof RedstoneWireBlock || b instanceof RedstoneTorchBlock
+                || b instanceof RedstoneLampBlock || b instanceof TntBlock || b instanceof CommandBlock;
+    }
+
+    private static net.minecraft.core.BlockPos pos3(BlockPos4 p) {
+        return new net.minecraft.core.BlockPos(p.x(), p.y(), p.z());
+    }
+
     public void onChanged(BlockPos4 p, BlockState old, BlockState now) {
         neighborChanged(p, p);
+        // vanilla's onPlace: fire lights nether portals, rails and pistons settle, modded blocks initialise...
+        if (old.getBlock() != now.getBlock() && !now.isAir() && !custom4D(now.getBlock())) {
+            Access4.inSlice(world, p.w() + 0.5, () -> {
+                if (get(p) == now) now.onPlace(world.serverLevel(), pos3(p), old, false);
+            });
+        }
+    }
+
+    /** Vanilla's neighbour reaction (shape updates like fences and stairs, popping off unsupported blocks...). */
+    private void vanillaNeighbor(BlockPos4 p, BlockPos4 from, BlockState s) {
+        int dx = from.x() - p.x(), dy = from.y() - p.y(), dz = from.z() - p.z(), dw = from.w() - p.w();
+        net.minecraft.core.Direction dir = dw != 0 ? null : net.minecraft.core.Direction.getNearest(dx, dy, dz, null);
+        Block fromBlock = get(from).getBlock();
+        Access4.inSlice(world, p.w() + 0.5, () -> {
+            var level = world.serverLevel();
+            net.minecraft.core.BlockPos bp = pos3(p);
+            if (dir != null) {
+                BlockState updated = s.updateShape(level, level, bp, dir, pos3(from), get(from), world.random());
+                if (updated != s) Block.updateOrDestroy(s, updated, level, bp, Block.UPDATE_ALL);
+            }
+            BlockState now = get(p);
+            if (now.getBlock() == s.getBlock()) now.handleNeighborChanged(level, bp, fromBlock, null, false);
+        });
     }
 
     public void neighborChanged(BlockPos4 p, BlockPos4 from) {
         BlockState s = get(p);
         Block b = s.getBlock();
+        if (!s.isAir() && !p.equals(from) && !custom4D(b)) {
+            vanillaNeighbor(p, from, s);
+            return;
+        }
         if (b instanceof FallingBlock) {
             BlockState below = get(p.below());
             if (canFallInto(below)) world.schedule(p, 2);
@@ -106,6 +147,9 @@ public final class Behaviors4 {
             if (lit != shouldLit) world.setBlock(p, s.setValue(BlockStateProperties.LIT, shouldLit), true);
         } else if (b instanceof RedstoneLampBlock) {
             if (s.getValue(RedstoneLampBlock.LIT) && powerAt(p) == 0) world.setBlock(p, s.setValue(RedstoneLampBlock.LIT, false), true);
+        } else if (!s.isAir()) {
+            // a tick vanilla code scheduled (buttons, repeaters, observers, fire, modded blocks...)
+            Access4.inSlice(world, p.w() + 0.5, () -> s.tick(world.serverLevel(), pos3(p), world.random()));
         }
     }
 
@@ -495,7 +539,7 @@ public final class Behaviors4 {
             }
             case Net4.ACTION_USE -> {
                 if (eye(st).distance(pos.center()) > REACH) return;
-                use(p, st, pos, face);
+                use(p, st, pos, face, a.hitX(), a.hitY(), a.hitZ());
             }
             case Net4.ACTION_PLACE -> {
                 if (eye(st).distance(pos.center()) > REACH) return;
@@ -551,7 +595,7 @@ public final class Behaviors4 {
         world.serverLevel().playSound(null, p.blockPosition(), sound, SoundSource.BLOCKS, 1f, 1f);
     }
 
-    private void use(ServerPlayer p, PlayerState4 st, BlockPos4 pos, Direction4 face) {
+    private void use(ServerPlayer p, PlayerState4 st, BlockPos4 pos, Direction4 face, float fx, float fy, float fz) {
         BlockState s = get(pos);
         Block b = s.getBlock();
         ItemStack held = p.getMainHandItem();
@@ -564,43 +608,17 @@ public final class Behaviors4 {
                 }
                 return;
             }
-            net.minecraft.world.MenuProvider menu = menuFor(s, pos, p);
-            if (menu != null) {
-                p.openMenu(menu);
-                return;
-            }
-            if (b instanceof LeverBlock) {
-                world.setBlock(pos, s.cycle(BlockStateProperties.POWERED), true);
-                playSound(p, SoundEvents.LEVER_CLICK);
-                return;
-            }
-            if (b instanceof ButtonBlock) {
-                if (!s.getValue(ButtonBlock.POWERED)) {
-                    world.setBlock(pos, s.setValue(ButtonBlock.POWERED, true), true);
-                    buttonRelease.put(pos.asLong(), 1);
-                    world.schedule(pos, 20);
-                    playSound(p, SoundEvents.STONE_BUTTON_CLICK_ON);
-                }
-                return;
-            }
             if (b instanceof TntBlock && (held.is(Items.FLINT_AND_STEEL) || held.is(Items.FIRE_CHARGE))) {
                 prime(pos);
                 if (!p.isCreative()) held.shrink(held.is(Items.FIRE_CHARGE) ? 1 : 0);
                 return;
             }
-            if (s.hasProperty(BlockStateProperties.OPEN)) {
-                if (b != Blocks.IRON_DOOR && b != Blocks.IRON_TRAPDOOR) {
-                    world.setBlock(pos, s.cycle(BlockStateProperties.OPEN), true);
-                    if (b instanceof DoorBlock) {
-                        BlockPos4 other = s.getValue(DoorBlock.HALF) == net.minecraft.world.level.block.state.properties.DoubleBlockHalf.LOWER ? pos.above() : pos.below();
-                        BlockState os = get(other);
-                        if (os.getBlock() == b) world.setBlock(other, os.setValue(BlockStateProperties.OPEN, get(pos).getValue(BlockStateProperties.OPEN)), true);
-                    }
-                    playSound(p, SoundEvents.WOODEN_DOOR_OPEN);
-                    return;
-                }
-            }
         }
+        boolean bucket = held.is(Items.WATER_BUCKET) || held.is(Items.LAVA_BUCKET) || held.is(Items.BUCKET) && b instanceof LiquidBlock;
+        // Everything else is vanilla's own interaction, run in the block's W slice: block menus and buttons, beds,
+        // flint and steel (nether portals), eyes of ender (end portals), hoes, bone meal, placement with vanilla
+        // orientation, modded blocks and items, and NeoForge's RightClickBlock event for other mods.
+        if (!bucket && face.dw == 0 && vanillaUse(p, pos, face, fx, fy, fz)) return;
         // Buckets
         if (held.is(Items.WATER_BUCKET) || held.is(Items.LAVA_BUCKET)) {
             BlockPos4 target = s.canBeReplaced() ? pos : pos.relative(face);
@@ -624,50 +642,46 @@ public final class Behaviors4 {
         place(p, st, pos, face);
     }
 
+    private static Direction dir3(Direction4 d) {
+        return switch (d) {
+            case EAST -> Direction.EAST;
+            case WEST -> Direction.WEST;
+            case NORTH -> Direction.NORTH;
+            case SOUTH -> Direction.SOUTH;
+            case UP -> Direction.UP;
+            case DOWN -> Direction.DOWN;
+            default -> null;
+        };
+    }
+
     /**
-     * Vanilla menus for 4D blocks. Workstations use a container access with no 3D position (always valid), so
-     * vanilla's "is the block still there" check, which would look at the 3D world, never closes them.
+     * Vanilla's right-click, exactly as its packet handler does it (each hand: use on the block, then use the
+     * item), with the level mapped to the clicked block's W slice. Returns true if something happened.
      */
-    private net.minecraft.world.MenuProvider menuFor(BlockState s, BlockPos4 pos, ServerPlayer p) {
-        Block b = s.getBlock();
-        var none = net.minecraft.world.inventory.ContainerLevelAccess.NULL;
-        java.util.function.BiFunction<Integer, net.minecraft.world.entity.player.Inventory, net.minecraft.world.inventory.AbstractContainerMenu> f = null;
-        String title = null;
-        if (b == Blocks.CRAFTING_TABLE) { f = (id, inv) -> new net.minecraft.world.inventory.CraftingMenu(id, inv, none); title = "container.crafting"; }
-        else if (b instanceof StonecutterBlock) { f = (id, inv) -> new net.minecraft.world.inventory.StonecutterMenu(id, inv, none); title = "container.stonecutter"; }
-        else if (b instanceof SmithingTableBlock) { f = (id, inv) -> new net.minecraft.world.inventory.SmithingMenu(id, inv, none); title = "container.upgrade"; }
-        else if (b instanceof LoomBlock) { f = (id, inv) -> new net.minecraft.world.inventory.LoomMenu(id, inv, none); title = "container.loom"; }
-        else if (b instanceof CartographyTableBlock) { f = (id, inv) -> new net.minecraft.world.inventory.CartographyTableMenu(id, inv, none); title = "container.cartography_table"; }
-        else if (b instanceof GrindstoneBlock) { f = (id, inv) -> new net.minecraft.world.inventory.GrindstoneMenu(id, inv, none); title = "container.grindstone_title"; }
-        else if (b instanceof AnvilBlock) { f = (id, inv) -> new net.minecraft.world.inventory.AnvilMenu(id, inv, none); title = "container.repair"; }
-        else if (b instanceof EnchantingTableBlock) {
-            // a 3D position is needed for enchantment options; bookshelf power is 0 (no 4D bookshelf scan yet)
-            var access = new net.minecraft.world.inventory.ContainerLevelAccess() {
-                @Override
-                public <T> java.util.Optional<T> evaluate(java.util.function.BiFunction<net.minecraft.world.level.Level, net.minecraft.core.BlockPos, T> fn) {
-                    return java.util.Optional.ofNullable(fn.apply(world.serverLevel(), new net.minecraft.core.BlockPos(0, world.serverLevel().getMaxY() + 64, 0)));
-                }
-            };
-            f = (id, inv) -> new net.minecraft.world.inventory.EnchantmentMenu(id, inv, access) {
-                @Override
-                public boolean stillValid(net.minecraft.world.entity.player.Player player) {
+    private boolean vanillaUse(ServerPlayer p, BlockPos4 pos, Direction4 face, float fx, float fy, float fz) {
+        if (p.isUsingItem()) return true; // already eating, drawing a bow...
+        var hit = new net.minecraft.world.phys.BlockHitResult(new net.minecraft.world.phys.Vec3(pos.x() + fx, pos.y() + fy, pos.z() + fz),
+                dir3(face), new net.minecraft.core.BlockPos(pos.x(), pos.y(), pos.z()), false);
+        boolean done = Access4.inSlice(world, pos.w() + 0.5, () -> {
+            var level = world.serverLevel();
+            for (InteractionHand hand : InteractionHand.values()) {
+                ItemStack stack = p.getItemInHand(hand);
+                var r = p.gameMode.useItemOn(p, level, stack, hand, hit);
+                if (r instanceof net.minecraft.world.InteractionResult.Success ok) {
+                    if (ok.shouldSwing()) p.swingAndResetAttackStrength(hand, stack.getInteractAnimation(), ok.swingSource() != net.minecraft.world.InteractionResult.SwingSource.PREDICTED);
                     return true;
                 }
-            };
-            title = "container.enchant";
-        } else if (b instanceof EnderChestBlock) {
-            f = (id, inv) -> net.minecraft.world.inventory.ChestMenu.threeRows(id, inv, p.getEnderChestInventory());
-            title = "container.enderchest";
-        } else if (BlockEntities4.containerSize(s) > 0 && world.blockEntityOrCreate(pos) instanceof BlockEntities4.Container4 ct) {
-            var inv0 = ct.inventory;
-            if (b instanceof ShulkerBoxBlock) { f = (id, inv) -> new net.minecraft.world.inventory.ShulkerBoxMenu(id, inv, inv0); title = "container.shulkerBox"; }
-            else if (b instanceof HopperBlock) { f = (id, inv) -> new net.minecraft.world.inventory.HopperMenu(id, inv, inv0); title = "container.hopper"; }
-            else if (b instanceof DispenserBlock) { f = (id, inv) -> new net.minecraft.world.inventory.DispenserMenu(id, inv, inv0); title = b instanceof DropperBlock ? "container.dropper" : "container.dispenser"; }
-            else { f = (id, inv) -> net.minecraft.world.inventory.ChestMenu.threeRows(id, inv, inv0); title = b instanceof BarrelBlock ? "container.barrel" : "container.chest"; }
-        }
-        if (f == null) return null;
-        var factory = f;
-        return new net.minecraft.world.SimpleMenuProvider((id, inv, pl) -> factory.apply(id, inv), net.minecraft.network.chat.Component.translatable(title));
+                if (r instanceof net.minecraft.world.InteractionResult.Fail) return true;
+                if (!stack.isEmpty() && p.gameMode.useItem(p, level, stack, hand) instanceof net.minecraft.world.InteractionResult.Success ok) {
+                    if (ok.shouldSwing()) p.swingAndResetAttackStrength(hand, stack.getInteractAnimation(), true);
+                    return true;
+                }
+            }
+            return false;
+        });
+        // a menu opened by the block (chest, furnace, crafting table, modded machine) stays tied to that slice
+        if (p.containerMenu != p.inventoryMenu) world.setMenuSlice(p, pos.w() + 0.5);
+        return done;
     }
 
     // ------------------------------------------------------------------ command blocks

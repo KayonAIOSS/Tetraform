@@ -29,6 +29,7 @@ neoForge {
             }
             if (project.hasProperty('selfTest')) {
                 systemProperty 'tetraform.selftest', 'true'
+                systemProperty 'tetraform.selftest.mode', project.property('selfTest').toString()
             }
             if (project.hasProperty('autoWorld')) {
                 programArguments.addAll('--quickPlaySingleplayer', project.property('autoWorld').toString())

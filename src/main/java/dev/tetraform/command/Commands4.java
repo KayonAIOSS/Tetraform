@@ -282,7 +282,10 @@ public final class Commands4 {
             return 0;
         }
         if (mode == Mode.DESTROY) destroyDrops(w, p);
-        if (!w.setBlock(p, block.getState(), true)) {
+        // vanilla's own placement in the block's slice, so block entity data works: setblock ... spawner{...}, chest{...}
+        boolean placed = dev.tetraform.world.Access4.inSlice(w, p.w() + 0.5,
+                () -> block.place(w.serverLevel(), new net.minecraft.core.BlockPos(p.x(), p.y(), p.z()), net.minecraft.world.level.block.Block.UPDATE_ALL));
+        if (!placed) {
             c.getSource().sendFailure(Component.literal("Could not set the block (unchanged or out of bounds)"));
             return 0;
         }
@@ -451,6 +454,18 @@ public final class Commands4 {
     /** Vanilla {@code /locate structure <id>} finds the 4D structures (vanilla's 3D ones don't generate there). */
     private static int locateVanilla(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
         String id = c.getArgument("structure", net.minecraft.commands.arguments.ResourceOrTagKeyArgument.Result.class).asPrintable();
+        if (id.contains("stronghold")) {
+            ServerWorld4 w = world(c);
+            Vec4 from = Pos4Argument.origin(c.getSource());
+            Vec4 s = dev.tetraform.world.Rooms4.nearestStronghold(w.generator().seed(), from);
+            if (s == null) {
+                c.getSource().sendFailure(Component.literal("No 4D stronghold found nearby"));
+                return 0;
+            }
+            c.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "Nearest stronghold portal room at %d %d %d %d (%d blocks away in 4D)",
+                    (int) Math.floor(s.x()), (int) Math.floor(s.y()), (int) Math.floor(s.z()), (int) Math.floor(s.w()), (int) Math.round(s.distance(from)))), false);
+            return 1;
+        }
         String kind = id.contains("village") ? "village" : id.contains("ruined_portal") ? "ruined_portal"
                 : id.contains("igloo") ? "igloo" : id.contains("shipwreck") ? "shipwreck" : null;
         if (kind == null) {

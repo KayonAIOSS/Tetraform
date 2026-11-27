@@ -88,7 +88,7 @@ looking at" or "what block is here" work without knowing about 4D:
 ### Sodium / Iris compatibility
 
 **Supported pairing: Sodium 0.9.3-beta.1 + Iris 1.11.7** (the release Sodium 0.9.3 refuses Iris 1.11.7).
-Tested in-game with Complementary Reimagined r5.10:
+Tested in-game with **Mellow v3.5** and **Photon v1.4** (shadows, waving plants, water, sunset and night at zw 0°, 45° and 90°) and earlier with Complementary Reimagined r5.10. Sodium and Iris are optional; Tetraform runs without them:
 
 * There are no Sodium or Iris mixins. Terrain goes through the section-geometry event, so Sodium meshes, culls
   and batches 4D terrain, and Iris shades it like normal terrain. **Terrain casts shadows.**
@@ -133,19 +133,64 @@ Tested in-game with Complementary Reimagined r5.10:
 * The server caps scheduled block ticks per tick (count and time), so big water or redstone events slow
   down instead of stalling the server.
 
-## Blocks you can use
+## Blocks, items and other mods: vanilla's own code, run in 4D
 
-Right-click works like vanilla:
+Right-clicking a 4D block runs **vanilla's own interaction code** (the same path as vanilla's packet handler,
+including NeoForge's `RightClickBlock` event), with the level mapped to the clicked block's W slice: every
+`Level.getBlockState`, `setBlock`, `getBlockEntity`, scheduled tick, light and height query answers from the 4D
+world. Using an item in the air works the same way, in your own slice. So it all behaves like vanilla:
 
-* **Workstations:** crafting table, stonecutter, smithing table, loom, cartography table, grindstone, anvil and
-  enchanting table open their vanilla menus.
-* **Storage:** chests, barrels, ender chests, shulker boxes, dispensers, droppers and hoppers have persistent
-  inventories. They are saved next to each column, and their contents drop when the block is broken.
+* **Every block entity is vanilla's own**: chests (double chests too), barrels, shulker boxes, furnaces, smokers
+  and blast furnaces (they smelt), hoppers (they move items), brewing stands, dispensers, beacons, signs, banners,
+  beds, bells, spawners, and modded machines and storage. They are saved next to each column (chests from 0.1
+  saves are converted, items kept) and tick in their own W slice. Menus close like vanilla when you walk away.
+* **Placement** uses vanilla's rules (stairs, slabs, double slabs, beds, doors, signs with their edit screen,
+  banners, placed modded blocks), and so do hoes, shovels, axes, bone meal, flint and steel, buckets of fish...
+  Placing against a W face (ana/kata) still uses Tetraform's own placement.
+* **Vanilla block behaviour** reaches 4D: neighbour and shape updates (fences, panes and walls connect, torches pop
+  off, leaves decay), scheduled ticks (buttons, repeaters, observers, fire) and random ticks (crops and saplings
+  grow, grass spreads, ice melts) run in each block's slice. Gravity, fluids, redstone dust, torches, lamps, TNT
+  and command blocks keep their 4D versions, which act along all eight directions.
+* **Other mods** that use these standard paths work without knowing about 4D: block-entity capabilities (item and
+  fluid handlers for pipes and hoppers), menus, placeable and right-clickable items such as backpacks, and anything
+  that reads `Minecraft.hitResult` (Jade shows the block or creature under the 4D crosshair).
 * **Command blocks:** the vanilla command block screen, with impulse, repeat and chain modes, conditional and
   always-active settings, redstone triggering and output tracking. `~ ~ ~ ~` in a command refers to the command
   block's own 4D position, so `setblock ~ ~1 ~ ~ stone` works in any W.
-* Levers, buttons, doors, trapdoors, fence gates, TNT and buckets also work, as before.
 
+## Survival in 4D
+
+* **Nether portals:** build the obsidian frame in an x-y or z-y plane of your slice and light it. Travel uses
+  vanilla's 8:1 scaling; coming back, vanilla finds (or builds) the exit portal in the W layer you left from.
+* **The End:** stronghold portal rooms generate underground (fully 4D rooms with a lava pool, twelve frames and a
+  silverfish spawner). An eye of ender flies toward the nearest one, and the remaining distance along W is shown
+  above the hotbar. Fill the frames and vanilla opens the portal; the End itself is vanilla.
+  `/locate structure minecraft:stronghold` also works.
+* **Dungeons:** mossy cobblestone rooms (4D, so closed along W too) with a zombie, skeleton or spider spawner and
+  two chests with vanilla's dungeon loot. Village chests get their vanilla loot tables too.
+* **Beds and respawn anchors** set a 4D spawn point (W included); you respawn there after death and after the
+  End. Without one you respawn on the surface at the world spawn.
+* **Ender pearls, chorus fruit, `/spreadplayers`** and other mods' teleporters move your 4D position too, keeping
+  your W.
+* **Elytra:** jump in mid-air to glide, with vanilla's flight physics extended to 4D (glide through W at a zw
+  angle). Fireworks boost along your 4D look direction.
+* **Light** is 4D everywhere it matters: monster spawning needs darkness (caves are dark, the surface is dark at
+  night), spawners in lit rooms stay idle like vanilla, crops need light.
+
+## Mobs
+
+* **Caps:** mobs within 128 blocks of a player (4D distance) are counted; by default the hostile cap is vanilla's
+  70 squared (4,900) and the passive cap vanilla's 10 cubed (1,000). Monsters spawn in groups in dark places
+  (caves included), animals on lit grass, from vanilla's plains spawn lists.
+* **Passive groups** are up to twice vanilla's size (`passiveGroupScale`).
+* **Creepers** always deal reduced damage (`creeperDamage`, 0.5 by default, in every dimension). Whether they
+  break blocks is a game rule, on by default: `/gamerule tetraform:creepers_spare_terrain false` restores vanilla
+  griefing.
+* **Despawning** follows vanilla's rules measured in 4D, and blasts only reach entities within their radius
+  along W.
+* **Cheaper far mobs:** mobs more than 48 blocks from every player tick every 2nd tick, past 96 blocks every
+  4th (`throttleFarMobs`), and clients are only sent entities within 128 blocks in 4D (vanilla would send
+  everything at your x/z in every W layer).
 ## Controls
 
 All of these are in **Options → Controls → Key Binds → Tetraform (4D)** and can be rebound to any key or
@@ -176,7 +221,8 @@ Pressing a 4D control in a 3D world shows a hint explaining why nothing happens.
 
 Commands: `/tp x y z w [yaw pitch zw]` (each rotation accepts `~`), `/tetra enter`, `/tetra leave`, `/tetra where`,
 `/tetra rotate <deg>` (adds to zw), `/tetra reset`, `/tetra explode x y z w [power]`,
-`/tetra locate [village|ruined_portal|igloo|shipwreck]` (prints the structure's plane and 4D position). These are
+`/tetra locate [village|ruined_portal|igloo|shipwreck]` (prints the structure's plane and 4D position);
+vanilla `/locate structure` finds the 4D villages, ruined portals, igloos, shipwrecks and strongholds. These are
 debug helpers: `/tetra fluids` (fluid counts nearby), `/tetra probe x y z w` (a block and its 8 neighbours) and
 `/tetra trace x y z w` (follows a flow back to whatever feeds it).
 
@@ -197,15 +243,15 @@ To build locally:
 
 ## Known limitations
 
-* Vanilla blocks with special mechanics outside those listed above (pistons, repeaters, comparators, hoppers,
-  containers with GUIs, crops) are placed and rendered, but they have no 4D behaviour yet.
+* Pistons and other blocks that move blocks only act within one slice. Vanilla redstone components (repeaters,
+  comparators, observers) work inside a slice and read 4D dust, but the 4D dust doesn't take power from them yet.
+* Nether portals and end portals must be built in an x-y or z-y plane of a slice (vanilla's frame check is 3D).
 * Non-cube shapes are lifted to hyperboxes (slabs span the full W range; torches and posts are thin in W),
   rendered with the face sprite of their model. They are not rendered with their full 3D model.
 * Lighting is approximate: sky light uses the 4D canopy and spreads up to 4 blocks sideways, and block light
   comes from emitters by 4D Manhattan distance. It is not a full flood fill.
-* Structures appear only in terrain generated with this version. Chests in structures are empty (no loot
-  tables yet), structure processors (mossy variation, crops) are skipped, and villagers have no beds or job
-  sites to claim, so they just wander. Maps are not 4D-aware.
+* Structures appear only in terrain generated with this version. Structure processors (mossy variation, crops) are
+  skipped. Maps are not 4D-aware.
 * A slice you have never seen still has to be cut once: during a fast first turn, distant terrain appears a
   moment after nearby terrain (empty until then, never stale).
 * Villages generated before this version keep their bare dirt street tiles (template air used to be written into
@@ -216,8 +262,7 @@ To build locally:
   Tetraform keys need to be set again.
 * Worlds created before this version can contain caves that open into lakes, and those can still flood if
   disturbed. New worlds don't have such caves.
-* Furnaces, smokers and blast furnaces can be placed but don't smelt yet. Dispensers, droppers and hoppers
-  store items but don't act on redstone yet. The enchanting table works without bookshelf power.
+* Dispensers and droppers don't fire from 4D redstone yet. Bookshelves count for enchanting only within your slice.
 
 ## Screenshots
 

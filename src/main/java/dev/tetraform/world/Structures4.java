@@ -68,6 +68,7 @@ public final class Structures4 {
         int minU = Integer.MAX_VALUE, minV = Integer.MAX_VALUE, maxU = Integer.MIN_VALUE, maxV = Integer.MIN_VALUE;
         int[] pos = new int[0]; // u, y, v triples
         BlockState[] states = new BlockState[0];
+        CompoundTag[] nbts = new CompoundTag[0]; // block entity data (chest loot tables...), or null
         int count;
         final List<double[]> entityPos = new ArrayList<>(); // u, y, v
         final List<CompoundTag> entityTags = new ArrayList<>();
@@ -80,14 +81,20 @@ public final class Structures4 {
         }
 
         void add(int u, int y, int v, BlockState s) {
+            add(u, y, v, s, null);
+        }
+
+        void add(int u, int y, int v, BlockState s, CompoundTag nbt) {
             if (count == states.length) {
                 int n = Math.max(256, count * 2);
                 pos = Arrays.copyOf(pos, n * 3);
                 states = Arrays.copyOf(states, n);
+                nbts = Arrays.copyOf(nbts, n);
             }
             pos[count * 3] = u;
             pos[count * 3 + 1] = y;
             pos[count * 3 + 2] = v;
+            nbts[count] = nbt;
             states[count++] = s;
             minU = Math.min(minU, u);
             maxU = Math.max(maxU, u);
@@ -370,7 +377,7 @@ public final class Structures4 {
                 if (surface(site.plane, u, v, site.cCoord) < TerrainGenerator4.SEA_LEVEL) s = Blocks.OAK_PLANKS.defaultBlockState();
                 else if (Math.floorMod((u * 73856093) ^ (v * 19349663) ^ (int) seed, 10) == 0) s = Blocks.GRASS_BLOCK.defaultBlockState();
             }
-            site.add(u, y, v, s);
+            site.add(u, y, v, s, s.hasBlockEntity() && info.nbt() != null && !info.state().is(Blocks.JIGSAW) ? info.nbt().copy() : null);
             if (foundation && rigid && info.pos().getY() == minY && !s.isAir() && s.getFluidState().isEmpty()) {
                 footprint.put(((long) u << 32) | (v & 0xFFFFFFFFL), y);
             }
@@ -456,6 +463,10 @@ public final class Structures4 {
                 l[s.plane.v] = v;
                 l[s.plane.c] = c;
                 col.setRaw(l[0], y, l[1], l[2], s.states[i]);
+                if (s.nbts[i] != null) {
+                    if (col.pendingBlockEntities == null) col.pendingBlockEntities = new HashMap<>();
+                    col.pendingBlockEntities.put(new dev.tetraform.math.BlockPos4(bx + l[0], y, bz + l[1], bw + l[2]).asLong(), s.nbts[i]);
+                }
             }
             for (int i = 0; i < s.entityPos.size(); i++) {
                 double[] e = s.entityPos.get(i);

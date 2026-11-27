@@ -8,8 +8,12 @@ public final class Config4 {
     public static final ModConfigSpec.IntValue PHYSICS_RADIUS;
     public static final ModConfigSpec.IntValue COLUMNS_PER_TICK;
     public static final ModConfigSpec.IntValue GEN_THREADS;
-    public static final ModConfigSpec.IntValue MOB_CAP;
+    public static final ModConfigSpec.IntValue HOSTILE_CAP;
+    public static final ModConfigSpec.IntValue PASSIVE_CAP;
+    public static final ModConfigSpec.DoubleValue PASSIVE_GROUP_SCALE;
+    public static final ModConfigSpec.DoubleValue CREEPER_DAMAGE;
     public static final ModConfigSpec.BooleanValue SPAWN_MOBS;
+    public static final ModConfigSpec.BooleanValue THROTTLE_FAR_MOBS;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -24,7 +28,17 @@ public final class Config4 {
         b.pop();
         b.push("mobs");
         SPAWN_MOBS = b.define("spawnMobs", true);
-        MOB_CAP = b.comment("Maximum 4D mobs per player neighbourhood.").defineInRange("mobCap", 24, 0, 200);
+        HOSTILE_CAP = b.comment("Most hostile mobs within 128 blocks (4D distance) of a player before natural spawning stops.",
+                "Default 4900 is vanilla's 70 squared.").defineInRange("hostileCap", 4900, 0, 100000);
+        PASSIVE_CAP = b.comment("Most passive animals within 128 blocks (4D distance) of a player before natural spawning stops.",
+                "Default 1000 is vanilla's 10 cubed.").defineInRange("passiveCap", 1000, 0, 100000);
+        PASSIVE_GROUP_SCALE = b.comment("Passive animals spawn in groups up to this many times vanilla's largest group.")
+                .defineInRange("passiveGroupScale", 2.0, 1.0, 8.0);
+        CREEPER_DAMAGE = b.comment("Creeper explosion damage multiplier (applies everywhere, 4D or not).",
+                "Whether creepers break blocks is the gamerule tetraform:creepers_spare_terrain (on by default).")
+                .defineInRange("creeperDamage", 0.5, 0.0, 1.0);
+        THROTTLE_FAR_MOBS = b.comment("Tick mobs that are far from every player (in 4D) less often: every 2nd tick past 48 blocks,",
+                "every 4th past 96. Keeps big 4D mob counts affordable.").define("throttleFarMobs", true);
         b.pop();
         SPEC = b.build();
     }

@@ -42,6 +42,10 @@ public final class TerrainGenerator4 {
     /** Set by the server once structure templates are available. */
     public volatile Structures4 structures;
 
+    public long seed() {
+        return seed;
+    }
+
     public TerrainGenerator4(long seed) {
         this.seed = seed;
         this.height = new Noise4(seed);
@@ -139,6 +143,7 @@ public final class TerrainGenerator4 {
                 }
             }
         }
+        Rooms4.decorate(col, seed);
         Structures4 st = structures;
         if (st != null) {
             var ents = st.decorate(col);

@@ -92,8 +92,18 @@ public final class Interaction4 {
     }
 
     private static void send(byte action, BlockPos4 p, Level4.Hit hit, int entity) {
+        float hx = 0.5f, hy = 0.5f, hz = 0.5f;
+        if (hit != null) {
+            hx = clamp01((float) (hit.point().x() - p.x()));
+            hy = clamp01((float) (hit.point().y() - p.y()));
+            hz = clamp01((float) (hit.point().z() - p.z()));
+        }
         ClientPacketDistributor.sendToServer(new Net4.Action4C2S(action, p.x(), p.y(), p.z(), p.w(),
-                (byte) (hit == null ? 0 : hit.face().ordinal()), entity));
+                (byte) (hit == null ? 0 : hit.face().ordinal()), entity, hx, hy, hz));
+    }
+
+    private static float clamp01(float f) {
+        return f < 0 ? 0 : (f > 1 ? 1 : f);
     }
 
     public static void pick() {

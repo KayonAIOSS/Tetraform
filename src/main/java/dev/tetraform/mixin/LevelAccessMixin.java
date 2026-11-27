@@ -35,6 +35,42 @@ public abstract class LevelAccessMixin {
         if (m != null) cir.setReturnValue(m.set(pos.getX(), pos.getY(), pos.getZ(), state, (flags & 1) != 0));
     }
 
+    /** Block entities of 4D blocks (chests, furnaces, spawners, modded machines) answer in the active slice. */
+    @Inject(method = "getBlockEntity", at = @At("HEAD"), cancellable = true)
+    private void tetraform$getBlockEntity(BlockPos pos, CallbackInfoReturnable<net.minecraft.world.level.block.entity.BlockEntity> cir) {
+        Access4.Mapper m = Access4.current((Level) (Object) this);
+        if (m != null) cir.setReturnValue(m.getBlockEntity(pos.getX(), pos.getY(), pos.getZ()));
+    }
+
+    @Inject(method = "setBlockEntity", at = @At("HEAD"), cancellable = true)
+    private void tetraform$setBlockEntity(net.minecraft.world.level.block.entity.BlockEntity be, CallbackInfo ci) {
+        Access4.Mapper m = Access4.serverContext((Level) (Object) this);
+        if (m == null) return;
+        ci.cancel();
+        BlockPos p = be.getBlockPos();
+        m.world().putVanillaBlockEntity(new dev.tetraform.math.BlockPos4(p.getX(), p.getY(), p.getZ(), (int) Math.floor(m.w())), be);
+    }
+
+    @Inject(method = "removeBlockEntity", at = @At("HEAD"), cancellable = true)
+    private void tetraform$removeBlockEntity(BlockPos p, CallbackInfo ci) {
+        Access4.Mapper m = Access4.serverContext((Level) (Object) this);
+        if (m == null) return;
+        ci.cancel();
+        m.world().removeVanillaBlockEntity(new dev.tetraform.math.BlockPos4(p.getX(), p.getY(), p.getZ(), (int) Math.floor(m.w())));
+    }
+
+    /** Heightmaps (portal placement, rain, mob AI, features) follow the 4D surface of the slice. */
+    @Inject(method = "getHeight(Lnet/minecraft/world/level/levelgen/Heightmap$Types;II)I", at = @At("HEAD"), cancellable = true)
+    private void tetraform$getHeight(net.minecraft.world.level.levelgen.Heightmap.Types type, int x, int z, CallbackInfoReturnable<Integer> cir) {
+        Access4.Mapper m = Access4.current((Level) (Object) this);
+        if (m != null) cir.setReturnValue(m.surface(x, z));
+    }
+
+    @Inject(method = "updateNeighbourForOutputSignal", at = @At("HEAD"), cancellable = true)
+    private void tetraform$outputSignal(BlockPos pos, net.minecraft.world.level.block.Block block, CallbackInfo ci) {
+        if (Access4.serverContext((Level) (Object) this) != null) ci.cancel();
+    }
+
     @Inject(method = "guardEntityTick", at = @At("HEAD"))
     private <T extends Entity> void tetraform$enter(Consumer<T> tick, T entity, CallbackInfo ci) {
         Access4.Mapper m = Access4.forEntity((Level) (Object) this, entity);

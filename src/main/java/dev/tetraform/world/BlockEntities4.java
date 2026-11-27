@@ -48,7 +48,7 @@ public final class BlockEntities4 {
         }
     }
 
-    /** Which blocks get a storage inventory, and how many slots. 0 = none. */
+    /** Slot count of the old (0.1) storage format, kept only to read old saves. */
     public static int containerSize(BlockState s) {
         Block b = s.getBlock();
         if (b instanceof ChestBlock || b instanceof BarrelBlock || b instanceof ShulkerBoxBlock) return 27;
@@ -57,14 +57,49 @@ public final class BlockEntities4 {
         return 0;
     }
 
+    /** Command blocks keep their 4D-aware entity; every other block with a block entity gets vanilla's own. */
     public static boolean needsEntity(BlockState s) {
-        return s.getBlock() instanceof CommandBlock || containerSize(s) > 0;
+        return s.hasBlockEntity();
     }
 
-    public static BE4 create(BlockPos4 pos, BlockState s) {
+    public static BE4 create(BlockPos4 pos, BlockState s, ServerLevel level) {
         if (s.getBlock() instanceof CommandBlock) return new CommandBlock4(pos);
-        int size = containerSize(s);
-        return size > 0 ? new Container4(pos, size) : null;
+        if (s.getBlock() instanceof EntityBlock eb) {
+            var be = eb.newBlockEntity(new net.minecraft.core.BlockPos(pos.x(), pos.y(), pos.z()), s);
+            if (be != null) {
+                be.setLevel(level);
+                return new Vanilla4(pos, be);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A vanilla (or modded) block entity living at a 4D position. Its vanilla position is (x, y, z); whenever it
+     * runs (ticking, menus, item transfer) the level is mapped to its W slice, so it reads and writes the 4D world.
+     */
+    public static final class Vanilla4 extends BE4 {
+        public final net.minecraft.world.level.block.entity.BlockEntity be;
+
+        public Vanilla4(BlockPos4 pos, net.minecraft.world.level.block.entity.BlockEntity be) {
+            super(pos);
+            this.be = be;
+        }
+
+        @Override
+        public String type() {
+            return "vanilla";
+        }
+
+        @Override
+        public void save(ValueOutput out) {
+            be.saveWithFullMetadata(out);
+        }
+
+        @Override
+        public void load(ValueInput in) {
+            be.loadWithComponents(in);
+        }
     }
 
     public static BE4 create(BlockPos4 pos, String type) {
