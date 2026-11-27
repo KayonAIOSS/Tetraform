@@ -101,9 +101,12 @@ public final class SliceManager {
         out.add(new MeshWorkers.Target(m.frame(), m.depth() - step));
         // the next rotation steps, in the direction of the last turn first
         double zw = ClientState4.zw;
-        double[] deltas = {Rotation4.SMOOTH_DEG_PER_TICK, Rotation4.SCROLL_STEP_DEG, -Rotation4.SMOOTH_DEG_PER_TICK, -Rotation4.SCROLL_STEP_DEG};
-        for (double dDeg : deltas) {
-            double a = zw + Math.toRadians(dDeg * (lastRotateDir == 0 ? 1 : lastRotateDir));
+        int dir = lastRotateDir == 0 ? 1 : lastRotateDir;
+        // the quarter-turn views the side buttons snap to, then one scroll notch either way
+        double[] next = {Rotation4.nextQuarter(zw, -1), Rotation4.nextQuarter(zw, 1),
+                zw + Math.toRadians(Rotation4.SCROLL_STEP_DEG * dir), zw - Math.toRadians(Rotation4.SCROLL_STEP_DEG * dir)};
+        for (double a0 : next) {
+            double a = a0;
             SliceFrame g = SliceFrame.zw(snapAngle(a));
             out.add(new MeshWorkers.Target(g, quantizeDepth(g, g.depthOf(p))));
         }

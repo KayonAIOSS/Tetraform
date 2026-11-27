@@ -22,9 +22,44 @@ import net.minecraft.world.phys.Vec3;
 public final class Pick4 {
     private Pick4() {}
 
-    private record Cell(int x, int y, int z, BlockState state) {}
+    private record Cell(int x, int y, int z, BlockState state, dev.tetraform.math.BlockPos4 pos4) {}
 
     private static volatile Cell cell;
+    private static Cell sent;
+    private static boolean sentAny;
+    /** A client-side stand-in block entity for the targeted block (mods choose their tooltip providers by it). */
+    private static net.minecraft.world.level.block.entity.BlockEntity standIn;
+    private static Cell standInFor;
+
+    /** The block entity to show for render cell (x, y, z): a stand-in when it is the targeted block, else null. */
+    public static net.minecraft.world.level.block.entity.BlockEntity blockEntityAt(int x, int y, int z) {
+        Cell c = cell;
+        if (c == null || c.x != x || c.y != y || c.z != z) return null;
+        if (standInFor != c) {
+            standInFor = c;
+            standIn = null;
+            if (c.state.getBlock() instanceof net.minecraft.world.level.block.EntityBlock eb) {
+                try {
+                    standIn = eb.newBlockEntity(new BlockPos(x, y, z), c.state);
+                    if (standIn != null) standIn.setLevel(Minecraft.getInstance().level);
+                } catch (RuntimeException e) {
+                    standIn = null;
+                }
+            }
+        }
+        return standIn;
+    }
+
+    /** Tells the server which 4D block the crosshair is on, whenever that changes. */
+    private static void report(Cell c) {
+        boolean same = c == null ? !sentAny : sentAny && sent != null && sent.x == c.x && sent.y == c.y && sent.z == c.z && sent.pos4.equals(c.pos4);
+        if (same) return;
+        sent = c;
+        sentAny = c != null;
+        net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(c == null
+                ? new dev.tetraform.net.Net4.Look4C2S(false, 0, 0, 0, 0, 0, 0, 0)
+                : new dev.tetraform.net.Net4.Look4C2S(true, c.x, c.y, c.z, c.pos4.x(), c.pos4.y(), c.pos4.z(), c.pos4.w()));
+    }
 
     /** The targeted block if (x, y, z) is the render cell named by the current block hit result, else null. */
     public static BlockState targetAt(int x, int y, int z) {
@@ -41,6 +76,7 @@ public final class Pick4 {
         Level4.Hit hit = ClientState4.target;
         if (ent != null) {
             cell = null;
+            report(null);
             double[] r = SliceManager.toRender(new Vec4(ent.getX(), ent.getY() + ent.getBbHeight() / 2, ent.getZ(), dev.tetraform.world.W4.get(ent)));
             mc.hitResult = new EntityHitResult(ent, new Vec3(r[0], r[1], r[2]));
             mc.crosshairPickEntity = ent;
@@ -50,6 +86,7 @@ public final class Pick4 {
         Vec3 eye = mc.player.getEyePosition();
         if (hit == null) {
             cell = null;
+            report(null);
             Vec3 end = eye.add(mc.player.getViewVector(1f).scale(mc.player.blockInteractionRange()));
             mc.hitResult = BlockHitResult.miss(end, Direction.getApproximateNearest(end.subtract(eye)), BlockPos.containing(end));
             return;
@@ -61,7 +98,11 @@ public final class Pick4 {
         Vec3 loc = new Vec3(rx, p.y(), rz);
         // the cell just inside the hit face holds the block
         BlockPos pos = BlockPos.containing(loc.subtract(face.getStepX() * 0.01, face.getStepY() * 0.01, face.getStepZ() * 0.01));
-        cell = new Cell(pos.getX(), pos.getY(), pos.getZ(), ClientState4.LEVEL.getBlock(hit.pos()));
+        Cell prev = cell;
+        BlockState st = ClientState4.LEVEL.getBlock(hit.pos());
+        cell = prev != null && prev.x == pos.getX() && prev.y == pos.getY() && prev.z == pos.getZ() && prev.pos4.equals(hit.pos()) && prev.state == st
+                ? prev : new Cell(pos.getX(), pos.getY(), pos.getZ(), st, hit.pos());
+        report(cell);
         mc.hitResult = new BlockHitResult(loc, face, pos, false);
     }
 

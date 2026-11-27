@@ -19,24 +19,39 @@
       }
     },
     "minecraft:the_end": {
-      "type": "minecraft:the_end",
+      "type": "tetraform:end",
       "generator": {
-        "type": "minecraft:noise",
-        "biome_source": {
-          "type": "minecraft:the_end"
-        },
-        "settings": "minecraft:end"
+        "type": "minecraft:flat",
+        "settings": {
+          "biome": "minecraft:the_end",
+          "features": false,
+          "lakes": false,
+          "layers": [
+            {
+              "block": "tetraform:slice_anchor",
+              "height": 256
+            }
+          ],
+          "structure_overrides": []
+        }
       }
     },
     "minecraft:the_nether": {
-      "type": "minecraft:the_nether",
+      "type": "tetraform:nether",
       "generator": {
-        "type": "minecraft:noise",
-        "biome_source": {
-          "type": "minecraft:multi_noise",
-          "preset": "minecraft:nether"
-        },
-        "settings": "minecraft:nether"
+        "type": "minecraft:flat",
+        "settings": {
+          "biome": "minecraft:nether_wastes",
+          "features": false,
+          "lakes": false,
+          "layers": [
+            {
+              "block": "tetraform:slice_anchor",
+              "height": 256
+            }
+          ],
+          "structure_overrides": []
+        }
       }
     }
   }

@@ -1,6 +1,7 @@
 package dev.tetraform.entity;
 
 import dev.tetraform.math.AABB4;
+import dev.tetraform.math.SliceFrame;
 import dev.tetraform.math.Vec4;
 import dev.tetraform.world.Level4;
 
@@ -13,6 +14,49 @@ public final class Physics4 {
     public record Result(Vec4 delta, boolean onGround, boolean horizontalCollision, boolean verticalCollision) {}
 
     public static Result move(Level4 level, AABB4 box, Vec4 delta, double stepHeight, boolean wasOnGround) {
+        return move(level, box, delta, stepHeight, wasOnGround, null);
+    }
+
+    /**
+     * Movement for a viewer looking through {@code view}: only blocks that are drawn in that slice count, so you
+     * never stand on, bump into or walk along a block you can't see. In an axis-aligned view the body is flattened
+     * onto the slice along the hidden axis (so stepping along it stops exactly at the face of the next visible
+     * layer); in a tilted view blocks the hyperplane doesn't pass through are ignored.
+     */
+    public static Result move(Level4 level, AABB4 box, Vec4 delta, double stepHeight, boolean wasOnGround, SliceFrame view) {
+        if (view != null && view.isAxisAligned()) {
+            int axis = Math.abs(view.normalX()) > 0.5 ? 0 : Math.abs(view.normalZ()) > 0.5 ? 2 : 3;
+            double c = (box.min(axis) + box.max(axis)) * 0.5;
+            box = switch (axis) {
+                case 0 -> new AABB4(c, box.minY(), box.minZ(), box.minW(), c + 1.0E-5, box.maxY(), box.maxZ(), box.maxW());
+                case 2 -> new AABB4(box.minX(), box.minY(), c, box.minW(), box.maxX(), box.maxY(), c + 1.0E-5, box.maxW());
+                default -> new AABB4(box.minX(), box.minY(), box.minZ(), c, box.maxX(), box.maxY(), box.maxZ(), c + 1.0E-5);
+            };
+            view = null;
+        }
+        VIEW.set(view);
+        try {
+            return moveStep(level, box, delta, stepHeight, wasOnGround);
+        } finally {
+            VIEW.remove();
+        }
+    }
+
+    private static final ThreadLocal<SliceFrame> VIEW = new ThreadLocal<>();
+
+    /** Does the hyperplane of {@code f} pass through {@code b} anywhere in the depth range [d0, d1]? */
+    public static boolean onSlice(SliceFrame f, AABB4 b, double d0, double d1) {
+        double lo = 0, hi = 0;
+        double[] n = {f.normalX(), f.normalZ(), f.normalW()};
+        double[] mn = {b.minX(), b.minZ(), b.minW()}, mx = {b.maxX(), b.maxZ(), b.maxW()};
+        for (int i = 0; i < 3; i++) {
+            lo += n[i] * (n[i] > 0 ? mn[i] : mx[i]);
+            hi += n[i] * (n[i] > 0 ? mx[i] : mn[i]);
+        }
+        return hi > Math.min(d0, d1) + 1.0E-6 && lo < Math.max(d0, d1) - 1.0E-6 || lo <= d0 && d0 < hi;
+    }
+
+    private static Result moveStep(Level4 level, AABB4 box, Vec4 delta, double stepHeight, boolean wasOnGround) {
         Result r = moveRaw(level, box, delta);
         if (stepHeight > 0 && r.horizontalCollision && (wasOnGround || r.onGround)) {
             // try stepping: up, horizontal, down
@@ -33,6 +77,13 @@ public final class Physics4 {
 
     private static Result moveRaw(Level4 level, AABB4 box, Vec4 delta) {
         List<AABB4> obstacles = level.collisions(box.expandTowards(delta.x(), delta.y(), delta.z(), delta.w()).inflate(1.0E-3));
+        SliceFrame view = VIEW.get();
+        if (view != null) {
+            Vec4 c = box.center();
+            double d0 = view.depthOf(c), d1 = d0 + view.depthOf(delta);
+            // unloaded terrain (a solid placeholder reaching below the world) always blocks
+            obstacles.removeIf(o -> o.minY() > -1 && !onSlice(view, o, d0, d1));
+        }
         double dy = delta.y();
         for (AABB4 o : obstacles) dy = box.clipAxis(o, 1, dy);
         box = box.move(0, dy, 0, 0);

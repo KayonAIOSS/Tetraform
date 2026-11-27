@@ -110,10 +110,17 @@ public final class Structures4 {
     private final long seed;
     private final Map<Long, Site> sites = new ConcurrentHashMap<>();
 
+    private final dev.tetraform.Tetraform.Kind kind;
+
     public Structures4(MinecraftServer server, TerrainGenerator4 gen, long seed) {
+        this(server, gen, seed, dev.tetraform.Tetraform.Kind.OVERWORLD);
+    }
+
+    public Structures4(MinecraftServer server, TerrainGenerator4 gen, long seed, dev.tetraform.Tetraform.Kind kind) {
         this.server = server;
         this.gen = gen;
         this.seed = seed;
+        this.kind = kind;
     }
 
     // ------------------------------------------------------------------ coordinates
@@ -155,6 +162,8 @@ public final class Structures4 {
     private Site plan(int rx, int rz, int rw) {
         long h = seed ^ (rx * 0x9E3779B97F4A7C15L) ^ (rz * 0xC2B2AE3D27D4EB4FL) ^ (rw * 0x165667B19E3779F9L);
         RandomSource rng = RandomSource.create(h);
+        if (kind == dev.tetraform.Tetraform.Kind.END) return endCity(rx, rz, rw, rng);
+        if (kind != dev.tetraform.Tetraform.Kind.OVERWORLD) return NONE;
         if (rng.nextFloat() > 0.35f) return NONE;
         int x0 = rx * REGION + 32 + rng.nextInt(REGION - 64);
         int z0 = rz * REGION + 32 + rng.nextInt(REGION - 64);
@@ -183,6 +192,87 @@ public final class Structures4 {
             site.name = "ruined_portal";
         }
         return site.count == 0 ? NONE : site;
+    }
+
+    // ------------------------------------------------------------------ end cities
+
+    /**
+     * An end city on an outer End island, built by vanilla's own end city generator (towers, bridges, houses and
+     * sometimes the ship with its elytra). Cities stand in an ordinary x-z plane so their shulkers, loot chests and
+     * the ship's item frame face the way vanilla's do.
+     */
+    private Site endCity(int rx, int rz, int rw, RandomSource rng) {
+        if (rng.nextFloat() > 0.3f) return NONE;
+        int x0 = rx * REGION + 24 + rng.nextInt(REGION - 48);
+        int z0 = rz * REGION + 24 + rng.nextInt(REGION - 48);
+        int w0 = rw * REGION + 24 + rng.nextInt(REGION - 48);
+        if (Math.sqrt((double) x0 * x0 + (double) z0 * z0 + (double) w0 * w0) < EndTerrain4.OUTER_START + 60) return NONE;
+        Plane plane = Plane.XZ;
+        // like vanilla: the lowest ground of a 5x5 box around the start, and only on solid ground above y 60
+        int low = Integer.MAX_VALUE;
+        for (int du = -5; du <= 5; du += 5) for (int dv = -5; dv <= 5; dv += 5) low = Math.min(low, gen.surfaceHeight(x0 + du, z0 + dv, w0));
+        if (low < 58) return NONE;
+        Site site = new Site(plane, w0);
+        site.name = "end_city";
+        site.origin = new Vec4(x0 + 0.5, low + 1, z0 + 0.5, w0 + 0.5);
+        List<net.minecraft.world.level.levelgen.structure.StructurePiece> pieces = new ArrayList<>();
+        net.minecraft.world.level.levelgen.structure.structures.EndCityPieces.startHouseTower(templates(), new BlockPos(x0, low + 1, z0),
+                Rotation.getRandom(rng), pieces, rng);
+        for (var piece : pieces) {
+            if (piece instanceof net.minecraft.world.level.levelgen.structure.TemplateStructurePiece tp) emitPiece(site, tp, rng);
+        }
+        return site.count == 0 ? NONE : site;
+    }
+
+    /** A vanilla template piece placed with its own settings, including the end city data markers. */
+    private void emitPiece(Site site, net.minecraft.world.level.levelgen.structure.TemplateStructurePiece piece, RandomSource rng) {
+        StructureTemplate t = piece.template();
+        var acc = (StructureTemplateAccessor) t;
+        if (acc.tetraform$palettes().isEmpty()) return;
+        StructurePlaceSettings st = piece.placeSettings();
+        BlockPos origin = piece.templatePosition();
+        boolean skipAir = st.getProcessors().contains(net.minecraft.world.level.levelgen.structure.templatesystem.BlockIgnoreProcessor.STRUCTURE_AND_AIR);
+        Map<Long, BlockState> placed = new HashMap<>();
+        List<Object[]> markers = new ArrayList<>();
+        for (var info : acc.tetraform$palettes().get(0).blocks()) {
+            BlockPos p = StructureTemplate.calculateRelativePosition(st, info.pos()).offset(origin);
+            BlockState s = info.state();
+            if (s.is(Blocks.STRUCTURE_BLOCK)) {
+                if (info.nbt() != null && "DATA".equals(info.nbt().getStringOr("mode", ""))) markers.add(new Object[]{p, info.nbt().getStringOr("metadata", "")});
+                continue;
+            }
+            if (s.is(Blocks.STRUCTURE_VOID) || skipAir && s.isAir()) continue;
+            s = s.mirror(st.getMirror()).rotate(st.getRotation());
+            site.add(p.getX(), p.getY(), p.getZ(), s, s.hasBlockEntity() && info.nbt() != null ? info.nbt().copy() : null);
+            placed.put(p.asLong(), s);
+        }
+        for (Object[] m : markers) {
+            BlockPos p = (BlockPos) m[0];
+            String id = (String) m[1];
+            if (id.startsWith("Chest")) {
+                BlockState chest = placed.get(p.below().asLong());
+                if (chest == null || !chest.hasBlockEntity()) continue;
+                CompoundTag tag = new CompoundTag();
+                tag.putString("LootTable", "minecraft:chests/end_city_treasure");
+                tag.putLong("LootTableSeed", rng.nextLong());
+                site.add(p.getX(), p.getY() - 1, p.getZ(), chest, tag);
+            } else if (id.startsWith("Sentry")) {
+                CompoundTag tag = new CompoundTag();
+                tag.putString("id", "minecraft:shulker");
+                site.entityPos.add(new double[]{p.getX() + 0.5, p.getY(), p.getZ() + 0.5});
+                site.entityTags.add(tag);
+            } else if (id.startsWith("Elytra")) {
+                CompoundTag tag = new CompoundTag();
+                tag.putString("id", "minecraft:item_frame");
+                tag.putByte("Facing", (byte) st.getRotation().rotate(Direction.SOUTH).get3DDataValue());
+                CompoundTag item = new CompoundTag();
+                item.putString("id", "minecraft:elytra");
+                item.putInt("count", 1);
+                tag.put("Item", item);
+                site.entityPos.add(new double[]{p.getX() + 0.5, p.getY(), p.getZ() + 0.5});
+                site.entityTags.add(tag);
+            }
+        }
     }
 
     private boolean flatEnough(Plane p, int u, int v, int c, int h) {
@@ -416,7 +506,8 @@ public final class Structures4 {
         if (best == null) return null;
         Vec4 o = best.origin;
         return String.format(java.util.Locale.ROOT, "%s (%s plane) at %d %d %d %d", best.name, best.plane.name(),
-                (int) Math.floor(o.x()), (int) Math.floor(o.y()), (int) Math.floor(o.z()), (int) Math.floor(o.w()));
+                (int) Math.floor(o.x()), (int) Math.floor(o.y()), (int) Math.floor(o.z()), (int) Math.floor(o.w()))
+                + String.format(java.util.Locale.ROOT, " (%d blocks, %d entities)", best.count, best.entityPos.size());
     }
 
     // ------------------------------------------------------------------ placement into columns

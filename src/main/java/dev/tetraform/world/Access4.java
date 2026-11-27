@@ -118,6 +118,95 @@ public final class Access4 {
         };
     }
 
+    /**
+     * A mapper for code that names blocks by a client's render-space cell: render cell {@code anchor} is the 4D
+     * block {@code anchor4}, and other cells are offset from it along the axes of the viewer's {@code frame}.
+     */
+    public static Mapper relative(ServerWorld4 w, BlockPos anchor, dev.tetraform.math.BlockPos4 anchor4, dev.tetraform.math.SliceFrame frame) {
+        final dev.tetraform.math.SliceFrame f = frame.copy();
+        return new Mapper() {
+            private dev.tetraform.math.BlockPos4 at(int x, int y, int z) {
+                if (x == anchor.getX() && y == anchor.getY() && z == anchor.getZ()) return anchor4;
+                var d = f.toWorld(x - anchor.getX(), 0, z - anchor.getZ(), 0);
+                return new dev.tetraform.math.BlockPos4(anchor4.x() + (int) Math.round(d.x()), anchor4.y() + y - anchor.getY(),
+                        anchor4.z() + (int) Math.round(d.z()), anchor4.w() + (int) Math.round(d.w()));
+            }
+
+            @Override
+            public BlockState get(int x, int y, int z) {
+                return w.getBlock(at(x, y, z));
+            }
+
+            @Override
+            public boolean set(int x, int y, int z, BlockState state, boolean notify) {
+                return w.setBlock(at(x, y, z), state, notify);
+            }
+
+            @Override
+            public int surface(int x, int z) {
+                var p = at(x, 0, z);
+                return w.level().heightAt(p.x(), p.z(), p.w());
+            }
+
+            @Override
+            public double w() {
+                return anchor4.w() + 0.5;
+            }
+
+            @Override
+            public ServerWorld4 world() {
+                return w;
+            }
+
+            @Override
+            public net.minecraft.world.level.block.entity.BlockEntity getBlockEntity(int x, int y, int z) {
+                return w.vanillaBlockEntity(at(x, y, z));
+            }
+        };
+    }
+
+    /**
+     * A sideways slice for vanilla code: vanilla x is 4D x, vanilla z is 4D <b>w</b>, and 4D z is fixed at
+     * {@code zFixed}. Nether portal frames built in the w-y plane are found and lit through this.
+     */
+    public static Mapper swapped(ServerWorld4 w, int zFixed) {
+        return new Mapper() {
+            @Override
+            public BlockState get(int x, int y, int z) {
+                return w.level().getBlock(x, y, zFixed, z);
+            }
+
+            @Override
+            public boolean set(int x, int y, int z, BlockState state, boolean notify) {
+                return w.setBlock(new dev.tetraform.math.BlockPos4(x, y, zFixed, z), state, notify);
+            }
+
+            @Override
+            public int surface(int x, int z) {
+                return w.level().heightAt(x, zFixed, z);
+            }
+
+            @Override
+            public ServerWorld4 world() {
+                return w;
+            }
+
+            @Override
+            public net.minecraft.world.level.block.entity.BlockEntity getBlockEntity(int x, int y, int z) {
+                return w.vanillaBlockEntity(new dev.tetraform.math.BlockPos4(x, y, zFixed, z));
+            }
+        };
+    }
+
+    public static <T> T run(Mapper m, java.util.function.Supplier<T> s) {
+        Mapper prev = push(m);
+        try {
+            return s.get();
+        } finally {
+            pop(prev);
+        }
+    }
+
     private static final ThreadLocal<java.util.ArrayDeque<Object>> SCOPES = ThreadLocal.withInitial(java.util.ArrayDeque::new);
     private static final Object SKIP = new Object(), NONE = new Object();
 

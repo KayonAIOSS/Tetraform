@@ -89,6 +89,7 @@ public final class Tetraform {
         modBus.addListener(Net4::register);
         NeoForge.EVENT_BUS.register(ServerEvents4.class);
         NeoForge.EVENT_BUS.register(dev.tetraform.world.Mobs4.class);
+        NeoForge.EVENT_BUS.register(dev.tetraform.world.Dimensions4.class);
         NeoForge.EVENT_BUS.addListener(Commands4::register);
     }
 
@@ -96,8 +97,21 @@ public final class Tetraform {
         return Identifier.fromNamespaceAndPath(MODID, path);
     }
 
-    /** Is this level four-dimensional (true for both the 4D overworld and the tesseract dimension)? */
+    /**
+     * Is this level four-dimensional? True for every level whose dimension type is one of this mod's: the 4D
+     * overworld and the tesseract dimension ({@code tetraform:tesseract}), the 4D Nether ({@code tetraform:nether})
+     * and the 4D End ({@code tetraform:end}).
+     */
     public static boolean is4D(Level level) {
-        return level != null && level.dimensionTypeRegistration().is(FOUR_D_TYPE);
+        return level != null && level.dimensionTypeRegistration().unwrapKey().map(k -> k.identifier().getNamespace().equals(MODID)).orElse(false);
+    }
+
+    /** Which kind of 4D terrain a level has. */
+    public enum Kind { OVERWORLD, NETHER, END }
+
+    public static Kind kind(Level level) {
+        if (level.dimension() == Level.NETHER) return Kind.NETHER;
+        if (level.dimension() == Level.END) return Kind.END;
+        return Kind.OVERWORLD;
     }
 }

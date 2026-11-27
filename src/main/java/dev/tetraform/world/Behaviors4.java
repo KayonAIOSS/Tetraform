@@ -71,7 +71,51 @@ public final class Behaviors4 {
             Access4.inSlice(world, p.w() + 0.5, () -> {
                 if (get(p) == now) now.onPlace(world.serverLevel(), pos3(p), old, false);
             });
+            if (now.getBlock() instanceof net.minecraft.world.level.block.BaseFireBlock && get(p) == now) lightSidewaysPortal(p);
         }
+    }
+
+    private static boolean portalDimension(net.minecraft.world.level.Level l) {
+        return l.dimension() == net.minecraft.world.level.Level.OVERWORLD || l.dimension() == net.minecraft.world.level.Level.NETHER;
+    }
+
+    /**
+     * Fire that didn't light a portal in its own slice may sit in a frame built in the w-y plane (a portal turned a
+     * quarter turn into W). Vanilla's frame check runs in a sideways slice where W stands in for z; the portal
+     * blocks it creates have axis z (thin along x), which is exactly that sheet seen from either view.
+     */
+    private void lightSidewaysPortal(BlockPos4 p) {
+        var level = world.serverLevel();
+        if (!portalDimension(level)) return;
+        net.minecraft.core.BlockPos vp = new net.minecraft.core.BlockPos(p.x(), p.y(), p.w());
+        Access4.run(Access4.swapped(world, p.z()), () -> {
+            var shape = net.minecraft.world.level.portal.PortalShape.findAnyShape(level, vp, net.minecraft.core.Direction.Axis.Z);
+            if (shape.isValid() && !shape.isComplete()) shape.createPortalBlocks(level);
+            return null;
+        });
+    }
+
+    private boolean portalComplete(BlockPos4 p, net.minecraft.core.Direction.Axis axis, boolean sideways) {
+        var level = world.serverLevel();
+        if (sideways) {
+            return Access4.run(Access4.swapped(world, p.z()), () -> net.minecraft.world.level.portal.PortalShape
+                    .findAnyShape(level, new net.minecraft.core.BlockPos(p.x(), p.y(), p.w()), axis).isComplete());
+        }
+        return Access4.inSlice(world, p.w() + 0.5, () -> net.minecraft.world.level.portal.PortalShape.findAnyShape(level, pos3(p), axis).isComplete());
+    }
+
+    /**
+     * Vanilla's "a nether portal breaks when its frame does", in 4D. A portal with axis x spans x and y; one with
+     * axis z spans z and y, or W and y when it was lit sideways. Changes beside the sheet (across it) never matter.
+     */
+    private void portalNeighbor(BlockPos4 p, BlockPos4 from, BlockState s) {
+        if (get(from).is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL)) return;
+        int dx = from.x() - p.x(), dz = from.z() - p.z(), dw = from.w() - p.w();
+        var axis = s.getValue(net.minecraft.world.level.block.NetherPortalBlock.AXIS);
+        boolean keep;
+        if (axis == net.minecraft.core.Direction.Axis.X) keep = dz != 0 || dw != 0 || portalComplete(p, axis, false);
+        else keep = dx != 0 || portalComplete(p, axis, false) || portalComplete(p, axis, true);
+        if (!keep) world.setBlock(p, Level4.AIR, true);
     }
 
     /** Vanilla's neighbour reaction (shape updates like fences and stairs, popping off unsupported blocks...). */
@@ -94,6 +138,10 @@ public final class Behaviors4 {
     public void neighborChanged(BlockPos4 p, BlockPos4 from) {
         BlockState s = get(p);
         Block b = s.getBlock();
+        if (b == net.minecraft.world.level.block.Blocks.NETHER_PORTAL && !p.equals(from)) {
+            portalNeighbor(p, from, s);
+            return;
+        }
         if (!s.isAir() && !p.equals(from) && !custom4D(b)) {
             vanillaNeighbor(p, from, s);
             return;

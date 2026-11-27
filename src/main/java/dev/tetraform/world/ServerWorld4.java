@@ -39,6 +39,10 @@ public final class ServerWorld4 {
     private final ServerLevel level;
     private final Level4 level4 = new Level4();
     private final TerrainGenerator4 generator;
+    /** Overworld, Nether or End terrain. */
+    public final Tetraform.Kind kind;
+    /** The W layer the End's dragon fight (and the arrival platform) is in. */
+    public static final double END_FIGHT_W = 0.5;
     private final ExecutorService workers;
     private final Path dir;
     private final Behaviors4 behaviors;
@@ -74,8 +78,15 @@ public final class ServerWorld4 {
     private ServerWorld4(MinecraftServer server, ServerLevel level) {
         this.server = server;
         this.level = level;
-        this.generator = new TerrainGenerator4(level.getSeed());
-        this.generator.structures = new Structures4(server, generator, level.getSeed());
+        this.kind = Tetraform.kind(level);
+        java.util.List<EndTerrain4.Spike> spikes = new java.util.ArrayList<>();
+        if (kind == Tetraform.Kind.END) {
+            for (var sp : net.minecraft.world.level.levelgen.feature.EndSpikeFeature.getSpikesForLevel(level)) {
+                spikes.add(new EndTerrain4.Spike(sp.getCenterX(), sp.getCenterZ(), sp.getRadius(), sp.getHeight(), sp.isGuarded()));
+            }
+        }
+        this.generator = new TerrainGenerator4(level.getSeed(), kind, spikes);
+        if (kind != Tetraform.Kind.NETHER) this.generator.structures = new Structures4(server, generator, level.getSeed(), kind);
         int threads = Config4.GEN_THREADS.get();
         if (threads <= 0) threads = Math.max(1, Math.min(6, Runtime.getRuntime().availableProcessors() - 2));
         this.workers = Executors.newFixedThreadPool(threads, r -> {
@@ -86,10 +97,18 @@ public final class ServerWorld4 {
         });
         var id = level.dimension().identifier();
         this.dir = server.getWorldPath(LevelResource.ROOT).resolve("tetraform4d").resolve(id.getNamespace()).resolve(id.getPath());
+        boolean fresh = !Files.exists(dir);
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
             Tetraform.LOGGER.error("Could not create 4D save directory", e);
+        }
+        if (fresh && kind == Tetraform.Kind.END && level.getDragonFight() != null) {
+            // an End that was 3D until now: forget its old fight (dragon, exit portal) and start one in 4D
+            var fight = net.minecraft.world.level.dimension.end.EnderDragonFight.createDefault();
+            fight.init(level, level.getSeed(), net.minecraft.core.BlockPos.ZERO);
+            level.getDataStorage().set(net.minecraft.world.level.dimension.end.EnderDragonFight.TYPE, fight);
+            level.setDragonFight(fight);
         }
         this.behaviors = new Behaviors4(this);
     }
@@ -178,6 +197,13 @@ public final class ServerWorld4 {
         int bx = (int) Math.floor(x), bz = (int) Math.floor(z), bw = (int) Math.floor(w);
         Column4 c = loadNow(bx >> 4, bz >> 4, bw >> 4);
         int y = c.height(bx & 15, bz & 15, bw & 15);
+        if (kind == Tetraform.Kind.NETHER) {
+            // under the roof: the first open floor above the lava sea
+            y = NetherTerrain4.LAVA_LEVEL + 1;
+            while (y < NetherTerrain4.ROOF - 3 && !(BlockShapes4.fullOpaque(c.get(bx & 15, y - 1, bz & 15, bw & 15))
+                    && c.get(bx & 15, y, bz & 15, bw & 15).isAir() && c.get(bx & 15, y + 1, bz & 15, bw & 15).isAir())) y++;
+            return new Vec4(bx + 0.5, y, bz + 0.5, bw + 0.5);
+        }
         while (y < Column4.HEIGHT - 2 && (!c.get(bx & 15, y, bz & 15, bw & 15).isAir() || !c.get(bx & 15, y + 1, bz & 15, bw & 15).isAir())) y++;
         return new Vec4(bx + 0.5, Math.max(y, TerrainGenerator4.SEA_LEVEL + 1), bz + 0.5, bw + 0.5);
     }
@@ -330,6 +356,10 @@ public final class ServerWorld4 {
             String id = pe.tag().getStringOr("id", "");
             var type = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getOptional(net.minecraft.resources.Identifier.tryParse(id));
             if (type.isEmpty()) continue;
+            // never twice (a column generated again after a crash would otherwise duplicate its crystals, villagers...)
+            Vec4 q = pe.pos();
+            var near = new net.minecraft.world.phys.AABB(q.x() - 0.75, q.y() - 0.75, q.z() - 0.75, q.x() + 0.75, q.y() + 0.75, q.z() + 0.75);
+            if (!level.getEntities(type.get(), near, e -> Math.abs(W4.get(e) - q.w()) < 0.5).isEmpty()) continue;
             CompoundTag tag = pe.tag().copy();
             tag.remove("Pos");
             tag.remove("UUID");
@@ -587,6 +617,23 @@ public final class ServerWorld4 {
         }
     }
 
+    /** The nearest nether portal block within {@code radius} along x, z and w of (x, y, z, w), or null. */
+    public BlockPos4 nearestNetherPortal4(int x, int y, int z, int w, int radius) {
+        BlockPos4 best = null;
+        double bd = Double.MAX_VALUE;
+        for (long k : netherPortals) {
+            BlockPos4 p = BlockPos4.of(k);
+            if (Math.abs(p.x() - x) > radius || Math.abs(p.z() - z) > radius || Math.abs(p.w() - w) > radius) continue;
+            if (!getBlock(p).is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL)) continue;
+            double d = (double) (p.x() - x) * (p.x() - x) + (double) (p.y() - y) * (p.y() - y) + (double) (p.z() - z) * (p.z() - z) + (double) (p.w() - w) * (p.w() - w);
+            if (d < bd) {
+                bd = d;
+                best = p;
+            }
+        }
+        return best;
+    }
+
     /** The nearest nether portal block in W layer {@code w} within a square of {@code radius} around {@code near}. */
     public Optional<net.minecraft.core.BlockPos> nearestNetherPortal(net.minecraft.core.BlockPos near, int radius, int w) {
         net.minecraft.core.BlockPos best = null;
@@ -617,9 +664,20 @@ public final class ServerWorld4 {
         int y0 = (int) Math.floor(c.y()), y1 = (int) Math.floor(c.y() + 1.79);
         int z0 = (int) Math.floor(c.z() - 0.3), z1 = (int) Math.floor(c.z() + 0.3);
         int w0 = (int) Math.floor(c.w() - 0.3), w1 = (int) Math.floor(c.w() + 0.3);
+        double depth = st.frame.depthOf(c);
         for (int w = w0; w <= w1; w++) for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) {
             BlockState s = level4.getBlock(x, y, z, w);
             if (s.isAir() || s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock) continue;
+            // only blocks drawn in the player's own slice touch them (a portal one layer over along the hidden
+            // axis is invisible, so it must not take you anywhere)
+            if (!dev.tetraform.entity.Physics4.onSlice(st.frame, dev.tetraform.math.AABB4.unitBlock(new BlockPos4(x, y, z, w)), depth, depth)) continue;
+            // and, like vanilla, only when the body overlaps the block's actual shape (a portal sheet is thin)
+            var shape = s.getShape(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, net.minecraft.core.BlockPos.ZERO);
+            if (!shape.isEmpty()) {
+                var b = shape.bounds();
+                if (!(c.x() + 0.3 > x + b.minX && c.x() - 0.3 < x + b.maxX && c.y() + 1.8 > y + b.minY && c.y() < y + b.maxY
+                        && c.z() + 0.3 > z + b.minZ && c.z() - 0.3 < z + b.maxZ)) continue;
+            }
             final int fx = x, fy = y, fz = z;
             Access4.inSlice(this, w + 0.5, () -> s.entityInside(level, new net.minecraft.core.BlockPos(fx, fy, fz), p,
                     net.minecraft.world.entity.InsideBlockEffectApplier.NOOP, true));

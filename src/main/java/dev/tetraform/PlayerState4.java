@@ -27,6 +27,9 @@ public final class PlayerState4 implements ValueIOSerializable {
      * (respawn, portals), and vanilla's 3D guess of the height would be wrong.
      */
     public transient long keep4DUntil;
+    /** What the client's crosshair is on: the vanilla cell it is drawn at and the 4D block (null if none). */
+    public transient net.minecraft.core.BlockPos lookRender;
+    public transient dev.tetraform.math.BlockPos4 look4;
 
     @Override
     public void serialize(ValueOutput out) {

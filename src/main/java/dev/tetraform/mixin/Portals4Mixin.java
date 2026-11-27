@@ -31,19 +31,38 @@ public abstract class Portals4Mixin {
         if (next != null && Tetraform.is4D(next)) {
             ServerWorld4 w = ServerWorld4.get(next);
             if (w != null) {
-                double wc = wOf(entity);
                 double scale = net.minecraft.world.level.dimension.DimensionType.getTeleportationScale(current.dimensionType(), next.dimensionType());
-                int x = (int) Math.floor(entity.getX() * scale), z = (int) Math.floor(entity.getZ() * scale), cw = (int) Math.floor(wc) >> 4;
+                // W is a horizontal axis like x and z, so in a 4D Nether it is scaled 1:8 as well
+                double wc = Tetraform.is4D(current) ? wOf(entity) * scale : wOf(entity);
+                Vec4 from = entity instanceof ServerPlayer sp ? ServerWorld4.state(sp).pos : new Vec4(entity.getX(), entity.getY(), entity.getZ(), wc);
+                int x = (int) Math.floor(from.x() * scale), z = (int) Math.floor(from.z() * scale), cw = (int) Math.floor(wc) >> 4;
                 // the exit is found or built around here: make sure that terrain exists first
-                for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) w.loadNow((x >> 4) + dx, (z >> 4) + dz, cw);
+                for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) for (int dw = -1; dw <= 1; dw++) w.loadNow((x >> 4) + dx, (z >> 4) + dz, cw + dw);
+                // like vanilla, link to an existing portal nearby (here: nearby in W as well) instead of building one
+                boolean toNether = newDim == Level.NETHER;
+                var found = w.nearestNetherPortal4(x, (int) from.y(), z, (int) Math.floor(wc), toNether ? 16 : 128);
+                if (found != null) wc = found.w() + 0.5;
                 m = Access4.server(w, wc);
+                // vanilla works out the exit from the entity's vanilla x and z: give it the true 4D ones meanwhile
+                // (a player's vanilla position is in their own, possibly turned, slice frame)
+                if (entity instanceof ServerPlayer) {
+                    SAVED.set(new double[]{entity.getX(), entity.getY(), entity.getZ()});
+                    entity.setPosRaw(from.x(), from.y(), from.z());
+                }
             }
         }
         Access4.enterScope(m);
     }
 
+    private static final ThreadLocal<double[]> SAVED = new ThreadLocal<>();
+
     @Inject(method = "getPortalDestination", at = @At("RETURN"))
     private void tetraform$exit(ServerLevel current, Entity entity, BlockPos entry, CallbackInfoReturnable<TeleportTransition> cir) {
+        double[] saved = SAVED.get();
+        if (saved != null) {
+            SAVED.remove();
+            entity.setPosRaw(saved[0], saved[1], saved[2]);
+        }
         Access4.Mapper m = Access4.serverContext();
         double wc = m != null ? m.w() : Double.NaN;
         Access4.exitScope();

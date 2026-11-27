@@ -60,7 +60,8 @@ public final class TetraformClient {
         while (mc.options.keyPickItem.consumeClick()) {
             if (player != null && ClientState4.target != null && ClientState4.targetEntity == null) Interaction4.pick();
         }
-        if (player != null && ClientState4.hasPos) Interaction4.tick(player);
+        if (player != null && ClientState4.hasPos) Interaction4.tick(player);
+
     }
 
     private static long lastHint;
@@ -92,6 +93,9 @@ public final class TetraformClient {
             return new dev.tetraform.world.Access4.Mapper() {
                 public net.minecraft.world.level.block.state.BlockState get(int x, int y, int z) { return ClientState4.LEVEL.getBlock(x, y, z, bw); }
                 public boolean set(int x, int y, int z, net.minecraft.world.level.block.state.BlockState s, boolean n) { return false; }
+            public net.minecraft.world.level.block.entity.BlockEntity getBlockEntity(int x, int y, int z) {
+                return Pick4.blockEntityAt(x, y, z);
+            }
                 public int surface(int x, int z) { return ClientState4.LEVEL.heightAt(x, z, bw); }
             };
         };
@@ -125,6 +129,9 @@ public final class TetraformClient {
                 return ClientState4.LEVEL.getBlock((int) Math.floor(p.x()), y, (int) Math.floor(p.z()), (int) Math.floor(p.w()));
             }
             public boolean set(int x, int y, int z, net.minecraft.world.level.block.state.BlockState s, boolean n) { return false; }
+            public net.minecraft.world.level.block.entity.BlockEntity getBlockEntity(int x, int y, int z) {
+                return Pick4.blockEntityAt(x, y, z);
+            }
             public int surface(int x, int z) {
                 var p = world(x, 0, z);
                 return ClientState4.LEVEL.heightAt((int) Math.floor(p.x()), (int) Math.floor(p.z()), (int) Math.floor(p.w()));

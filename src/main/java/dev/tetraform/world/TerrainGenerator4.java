@@ -46,7 +46,24 @@ public final class TerrainGenerator4 {
         return seed;
     }
 
+    /** The Nether terrain (biomes) when this generates a 4D Nether, else null. */
+    NetherTerrain4 nether() {
+        return nether;
+    }
+
+    /** Which world this generates: the 4D overworld, Nether or End. */
+    public final dev.tetraform.Tetraform.Kind kind;
+    private final NetherTerrain4 nether;
+    private final EndTerrain4 end;
+
     public TerrainGenerator4(long seed) {
+        this(seed, dev.tetraform.Tetraform.Kind.OVERWORLD, java.util.List.of());
+    }
+
+    public TerrainGenerator4(long seed, dev.tetraform.Tetraform.Kind kind, java.util.List<EndTerrain4.Spike> spikes) {
+        this.kind = kind;
+        this.nether = kind == dev.tetraform.Tetraform.Kind.NETHER ? new NetherTerrain4(seed) : null;
+        this.end = kind == dev.tetraform.Tetraform.Kind.END ? new EndTerrain4(seed, spikes) : null;
         this.seed = seed;
         this.height = new Noise4(seed);
         this.mountains = new Noise4(seed * 31 + 7);
@@ -55,6 +72,8 @@ public final class TerrainGenerator4 {
     }
 
     public int surfaceHeight(int x, int z, int w) {
+        if (nether != null) return nether.surfaceHeight(x, z, w);
+        if (end != null) return end.surfaceHeight(x, z, w);
         double base = height.fbm3(x / 160.0, z / 160.0, w / 160.0, 4);
         double m = mountains.fbm3(x / 300.0, z / 300.0, w / 300.0, 3);
         double ridge = 1.0 - Math.abs(mountains.sample(x / 90.0, z / 90.0, w / 90.0, 3.3));
@@ -79,6 +98,20 @@ public final class TerrainGenerator4 {
     }
 
     public Column4 generate(int cx, int cz, int cw) {
+        if (nether != null) return nether.generate(cx, cz, cw);
+        if (end != null) {
+            Column4 c = end.generate(cx, cz, cw);
+            Structures4 st = structures;
+            if (st != null) {
+                var ents = st.decorate(c);
+                if (!ents.isEmpty()) {
+                    if (c.pendingEntities == null) c.pendingEntities = new java.util.ArrayList<>();
+                    c.pendingEntities.addAll(ents);
+                }
+                c.recomputeHeightmap();
+            }
+            return c;
+        }
         Column4 col = new Column4(cx, cz, cw);
         int bx = cx << 4, bz = cz << 4, bw = cw << 4;
         int[] heights = new int[4096];

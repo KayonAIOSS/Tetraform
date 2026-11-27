@@ -91,9 +91,206 @@ public final class DevSelfTest {
         step(40, () -> mc().stop());
     }
 
+    private static net.minecraft.server.level.ServerPlayer serverPlayer() {
+        var s = mc().getSingleplayerServer();
+        return s == null ? null : s.getPlayerList().getPlayer(mc().player.getUUID());
+    }
+
+    /** Runs on the integrated server thread with the player's current level. */
+    private static void serverHere(java.util.function.BiConsumer<net.minecraft.server.level.ServerLevel, net.minecraft.server.level.ServerPlayer> r) {
+        var s = mc().getSingleplayerServer();
+        if (s != null) s.execute(() -> {
+            var sp = s.getPlayerList().getPlayer(mc().player.getUUID());
+            if (sp != null) r.accept(sp.level(), sp);
+        });
+    }
+
+    /** 0.3.5 checks: hidden-layer collision, snap cycling, Jade server data, w-y portals, the 4D Nether and End. */
+    private static void buildDims() {
+        int py = 150;
+        // an earlier run may have left the player dead or in another dimension
+        step(0, () -> {
+            if (!mc().player.isAlive()) mc().player.respawn();
+        });
+        step(60, () -> serverHere((l, sp) -> {
+            if (l.dimension() != net.minecraft.world.level.Level.OVERWORLD) {
+                sp.teleport(sp.findRespawnPositionAndUseSpawnBlock(false, net.minecraft.world.level.portal.TeleportTransition.DO_NOTHING));
+            }
+        }));
+        step(140, () -> {
+            cmd("gamemode creative");
+            cmd("tp @s ~" + (300 + (int) (System.currentTimeMillis() % 400)) + " " + py + " ~ ~");
+        });
+        step(80, () -> {
+            Vec4 p = ClientState4.pos;
+            x = (int) Math.floor(p.x()); z = (int) Math.floor(p.z()); w = (int) Math.floor(p.w()); y = py;
+            log("start at " + x + " " + z + " " + w);
+            cmd("time set day");
+            cmd("fill " + at(-8, py - 1, -8) + " " + at(8, py - 1, 8) + " stone");
+            cmd("fill " + at(-8, py, -8) + " " + at(8, py + 6, 8) + " air");
+            cmd("tp @s " + (x + 0.5) + " " + py + " " + (z + 0.5) + " " + (w + 0.5) + " 0 20 0");
+        });
+        // --- collision only with blocks drawn in the slice: a wall one W layer over must not stop you
+        step(40, () -> {
+            cmd("fill " + (x + 2) + " " + py + " " + (z - 2) + " " + (w + 1) + " " + (x + 2) + " " + (py + 2) + " " + (z + 2) + " " + (w + 1) + " stone");
+            cmd("fill " + (x - 2) + " " + py + " " + (z - 2) + " " + w + " " + (x - 2) + " " + (py + 2) + " " + (z + 2) + " " + w + " stone");
+        });
+        step(20, () -> {
+            ClientState4.setZW(0);
+            Vec4 at = new Vec4(x + 0.5, py, z + 0.5, w + 0.85);
+            var box = dev.tetraform.math.AABB4.ofCenterBottom(at, 0.3, 1.8);
+            var hidden = dev.tetraform.entity.Physics4.move(ClientState4.LEVEL, box, new Vec4(3, 0, 0, 0), 0, true, ClientState4.FRAME);
+            var seen = dev.tetraform.entity.Physics4.move(ClientState4.LEVEL, box, new Vec4(-3, 0, 0, 0), 0, true, ClientState4.FRAME);
+            var old = dev.tetraform.entity.Physics4.move(ClientState4.LEVEL, box, new Vec4(3, 0, 0, 0), 0, true);
+            log("collision: through hidden-layer wall dx=" + hidden.delta().x() + " (want 3), visible wall dx=" + seen.delta().x()
+                    + " (want about -1.2), old full-body rule dx=" + old.delta().x());
+            var fall = dev.tetraform.entity.Physics4.move(ClientState4.LEVEL, dev.tetraform.math.AABB4.ofCenterBottom(new Vec4(x + 2.5, py + 3.2, z + 0.5, w + 0.85), 0.3, 1.8),
+                    new Vec4(0, -2, 0, 0), 0, false, ClientState4.FRAME);
+            log("standing on a hidden-layer block: onGround=" + fall.onGround() + " dy=" + fall.delta().y() + " (want false, -2)");
+        });
+        // --- side-button snap cycle: X(0) -> Z(270) -> B(180) -> C(90) -> X; from between Z and X: forward Z, back X
+        step(5, () -> {
+            StringBuilder sb = new StringBuilder();
+            double a = 0;
+            for (int i = 0; i < 4; i++) {
+                a = Rotation4.nextQuarter(a, -1);
+                sb.append(Math.round(Math.toDegrees(((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)))).append(' ');
+            }
+            double mid = Math.toRadians(315);
+            log("snap forward from 0: " + sb + "| from 315: forward " + Math.round(Math.toDegrees(Rotation4.nextQuarter(mid, -1)))
+                    + " back " + Math.round(Math.toDegrees(Rotation4.nextQuarter(mid, 1)) % 360));
+        });
+        // --- Jade: a chest with items, read on the server through the 4D bridge
+        step(5, () -> {
+            cmd("fill " + (x - 2) + " " + py + " " + (z - 2) + " " + w + " " + (x - 2) + " " + (py + 2) + " " + (z + 2) + " " + w + " air");
+            cmd("fill " + (x + 2) + " " + py + " " + (z - 2) + " " + (w + 1) + " " + (x + 2) + " " + (py + 2) + " " + (z + 2) + " " + (w + 1) + " air");
+            cmd("setblock " + at(0, py, 2) + " chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:5},{Slot:1b,id:\"minecraft:blaze_rod\",count:3}]}");
+            cmd("setblock " + at(2, py, 2) + " furnace{Items:[{Slot:0b,id:\"minecraft:raw_iron\",count:8},{Slot:1b,id:\"minecraft:coal\",count:4}]}");
+        });
+        step(20, () -> cmd("tp @s " + (x + 0.5) + " " + py + " " + (z + 0.5) + " " + (w + 0.5) + " 0 45 0"));
+        step(60, () -> log("MARK jade-chest target=" + mc().hitResult + " cell " + (mc().hitResult instanceof net.minecraft.world.phys.BlockHitResult b ? mc().level.getBlockEntity(b.getBlockPos()) : null)));
+        step(5, () -> cmd("tp @s " + (x + 2.5) + " " + py + " " + (z + 0.5) + " " + (w + 0.5) + " 0 45 0"));
+        step(60, () -> log("MARK jade-furnace"));
+        // --- a nether portal frame in the w-y plane (x and z fixed), lit with fire
+        int fx = 6, fz = 2;
+        step(5, () -> {
+            cmd("fill " + (x + fx) + " " + py + " " + (z + fz) + " " + w + " " + (x + fx) + " " + (py + 4) + " " + (z + fz) + " " + (w + 3) + " obsidian");
+            cmd("fill " + (x + fx) + " " + (py + 1) + " " + (z + fz) + " " + (w + 1) + " " + (x + fx) + " " + (py + 3) + " " + (z + fz) + " " + (w + 2) + " air");
+        });
+        step(10, () -> cmd("setblock " + (x + fx) + " " + (py + 1) + " " + (z + fz) + " " + (w + 1) + " fire"));
+        step(10, () -> server(l -> {
+            var w4 = dev.tetraform.world.ServerWorld4.get(l);
+            StringBuilder sb = new StringBuilder();
+            for (int yy = 1; yy <= 3; yy++) for (int ww = 1; ww <= 2; ww++) {
+                var s = w4.getBlock(new dev.tetraform.math.BlockPos4(x + fx, py + yy, z + fz, w + ww));
+                sb.append(s.is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL) ? "P" + s.getValue(net.minecraft.world.level.block.NetherPortalBlock.AXIS) : s.getBlock().getName().getString()).append(' ');
+            }
+            log("w-y portal blocks: " + sb);
+        }));
+        // walk into it from the view where it faces you (zw 90: the slice holds x, y and w)
+        step(10, () -> cmd("tp @s " + (x + fx - 2.5) + " " + (py + 1) + " " + (z + fz + 0.5) + " " + (w + 1.5) + " -90 0 90"));
+        step(120, () -> log("MARK wy-portal"));
+        step(10, () -> cmd("tp @s " + (x + fx + 0.5) + " " + (py + 1) + " " + (z + fz + 0.5) + " " + (w + 1.5) + " -90 0 90"));
+        step(200, () -> log("dimension after w-y portal: " + mc().level.dimension().identifier() + " 4D=" + ClientState4.active + " pos4 " + ClientState4.pos));
+        step(60, () -> {
+            ClientState4.setZW(0);
+            log("MARK nether-arrival");
+        });
+        // --- the 4D Nether: terrain and a fortress with a blaze spawner
+        step(10, () -> serverHere((l, sp) -> {
+            var w4 = dev.tetraform.world.ServerWorld4.get(l);
+            if (w4 == null) {
+                log("nether is not 4D");
+                return;
+            }
+            var sp4 = dev.tetraform.world.Fortress4.nearestBlazeSpawner(w4.generator().seed(), ServerWorld4Pos.of(sp));
+            log("nearest fortress blaze spawner: " + sp4);
+            if (sp4 != null) {
+                room4[0] = sp4.x(); room4[1] = sp4.y(); room4[2] = sp4.z(); room4[3] = sp4.w();
+            }
+        }));
+        step(10, () -> cmd("tp @s " + (room4[0] + 3.5) + " " + (room4[1] - 1) + " " + (room4[2] + 0.5) + " " + (room4[3] + 0.5) + " 90 10 0"));
+        step(200, () -> server2(l -> {
+            var w4 = dev.tetraform.world.ServerWorld4.get(l);
+            var b = w4.getBlock(new dev.tetraform.math.BlockPos4(room4[0], room4[1], room4[2], room4[3]));
+            var be = w4.vanillaBlockEntity(new dev.tetraform.math.BlockPos4(room4[0], room4[1], room4[2], room4[3]));
+            log("fortress spawner block " + b + " entity " + (be == null ? null : be.saveWithoutMetadata(l.registryAccess())));
+        }));
+        step(10, () -> log("MARK fortress"));
+        step(10, () -> cmd("tp @s " + (room4[0] + 0.5) + " " + (room4[1] + 30) + " " + (room4[2] + 0.5) + " " + (room4[3] + 0.5) + " 0 40 0"));
+        step(100, () -> log("MARK nether-view"));
+        // --- the 4D End: through an end portal (from here, as vanilla allows from any dimension but the End)
+        step(10, () -> serverHere((l, sp) -> {
+            var t = ((net.minecraft.world.level.block.EndPortalBlock) net.minecraft.world.level.block.Blocks.END_PORTAL).getPortalDestination(l, sp, sp.blockPosition());
+            if (t != null) sp.teleport(t);
+        }));
+        step(200, () -> log("dimension after end portal: " + mc().level.dimension().identifier() + " 4D=" + ClientState4.active + " pos4 " + ClientState4.pos));
+        step(20, () -> log("MARK end-arrival"));
+        step(200, () -> server2(l -> {
+            int dragons = 0, crystals = 0;
+            for (var e : l.getAllEntities()) {
+                if (e instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon) dragons++;
+                if (e instanceof net.minecraft.world.entity.boss.enderdragon.EndCrystal) crystals++;
+            }
+            var w4 = dev.tetraform.world.ServerWorld4.get(l);
+            int top = w4.level().heightAt(0, 0, 0);
+            log("end: dragons " + dragons + " crystals " + crystals + " centre top y " + top + " block " + w4.getBlock(new dev.tetraform.math.BlockPos4(0, top, 0, 0)));
+        }));
+        step(10, () -> {
+            cmd("gamemode spectator");
+            cmd("tp @s 60.5 110 0.5 0.5 90 35 0");
+        });
+        step(150, () -> log("MARK end-island"));
+        step(10, () -> {
+            mc().player.getAbilities().flying = true;
+            cmd("tp @s 1400.5 120 0.5 0.5 90 35 0");
+        });
+        step(100, () -> server2(l -> {
+            var w4 = dev.tetraform.world.ServerWorld4.get(l);
+            String c = w4.generator().structures.locate(new Vec4(1400, 100, 0, 0), "end_city");
+            log("nearest end city: " + c);
+            if (c != null) {
+                String[] f = c.substring(c.indexOf(" at ") + 4, c.indexOf(" (", c.indexOf(" at "))).split(" ");
+                room4[0] = Integer.parseInt(f[0]); room4[1] = Integer.parseInt(f[1]); room4[2] = Integer.parseInt(f[2]); room4[3] = Integer.parseInt(f[3]);
+            }
+        }));
+        step(10, () -> {
+            mc().player.getAbilities().flying = true;
+            cmd("tp @s " + (room4[0] - 30.5) + " " + (room4[1] + 40) + " " + (room4[2] + 0.5) + " " + (room4[3] + 0.5) + " -90 30 0");
+        });
+        step(300, () -> log("MARK end-city"));
+        step(10, () -> server2(l -> {
+            int frames = 0, shulkers = 0;
+            for (var e : l.getAllEntities()) {
+                if (e instanceof net.minecraft.world.entity.decoration.ItemFrame f && f.getItem().is(net.minecraft.world.item.Items.ELYTRA)) frames++;
+                if (e instanceof net.minecraft.world.entity.monster.Shulker) shulkers++;
+            }
+            log("end city entities: elytra frames " + frames + " shulkers " + shulkers);
+        }));
+        step(20, () -> log("MARK done"));
+        step(40, () -> mc().stop());
+    }
+
+    private static final int[] room4 = new int[4];
+
+    /** Server-thread action on the level the player is in. */
+    private static void server2(java.util.function.Consumer<net.minecraft.server.level.ServerLevel> r) {
+        serverHere((l, sp) -> r.accept(l));
+    }
+
+    private static final class ServerWorld4Pos {
+        static Vec4 of(net.minecraft.server.level.ServerPlayer sp) {
+            return dev.tetraform.world.ServerWorld4.state(sp).pos;
+        }
+    }
+
     private static void build() {
         if ("shaders".equals(System.getProperty("tetraform.selftest.mode"))) {
             buildShaders();
+            return;
+        }
+        if ("dims".equals(System.getProperty("tetraform.selftest.mode"))) {
+            buildDims();
             return;
         }
         int py = 150;

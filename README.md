@@ -4,8 +4,9 @@ A NeoForge mod for **Minecraft 26.3** (NeoForge `26.3.0.116`, Java 25) that adds
 dimension. It does not stack copies of a 3D world. Every block is a unit tesseract, every position is a `Vec4`,
 and everything you see is the 3D cross-section of a 4D world by your own viewing hyperplane, rendered as faces.
 
-**It works out of the box:** with Tetraform installed, the *Default* world type creates a 4D overworld (the
-Nether and End stay vanilla). `/tetra enter` also takes you to a separate 4D dimension from any world, including
+**It works out of the box:** with Tetraform installed, the *Default* world type creates a 4D world: overworld,
+Nether and End are all four-dimensional. A 4D world made with an older version gets a 4D Nether and End the next
+time it loads (whatever was built in its old 3D Nether and End is cleared as those chunks load). `/tetra enter` also takes you to a separate 4D dimension from any world, including
 worlds created before the mod was installed.
 
 ## What is four-dimensional
@@ -16,7 +17,7 @@ worlds created before the mod was installed.
 | **World storage** | 16×16×16×16 tesseract sections in palette-compressed, bit-packed storage, stacked into 256-tall columns keyed by (cx, cz, cw). They are saved in `<world>/tetraform4d/<dimension>/`. |
 | **Terrain** | The height field is a function of (x, z, w). Caves come from 4D simplex noise and trees grow hyperspherical canopies. Generation runs off-thread. |
 | **Neighbours** | Every block has **8** face neighbours (`Direction4`: ±x, ±y, ±z, ±w). Face culling, redstone, fluids and light all use them. |
-| **Physics** | Swept hyperbox collision on all four axes, with step-up, gravity, swimming and creative flight. |
+| **Physics** | Swept hyperbox collision on all four axes, with step-up, gravity, swimming and creative flight. You only collide with blocks drawn in your slice: you can't stand on, bump into or enter a portal you can't see one layer over along the hidden axis. |
 | **Redstone** | Dust networks connect along all 6 horizontal directions (x, z **and w**) plus up and down steps. Levers, buttons, redstone blocks, torches, lamps and conductive blocks all work. |
 | **Fluids / gravity / TNT** | Water and lava spread in 6 horizontal directions, form infinite sources and mix into obsidian and cobblestone. Sand and gravel fall. TNT blows up a 4D hyperball. |
 | **Creatures** | **Every vanilla creature** (animals, monsters, villagers, iron golems) and every item entity has a W coordinate. Each one runs its normal vanilla AI inside its own x-y-z slice, so pathfinding, line of sight, sun burning and doors all work against the 4D world. Creatures drift into neighbouring W layers now and then, and a hunting monster lines its W up with its target. They are drawn with their **vanilla models** (player skins and skin-layer mods included). They only see, attack and collide with things in their own slice. Your W rotation changes only what you see: when you snap ana with `Z`, a cow looking at you doesn't appear to turn. Walk forward and you leave its slice, so it disappears. |
@@ -81,7 +82,12 @@ looking at" or "what block is here" work without knowing about 4D:
 * `Minecraft.hitResult` and `crosshairPickEntity` hold the 4D crosshair target (block or creature), in the same
   render-space coordinates as the camera.
 * On the render thread, `Level.getBlockState` / `getFluidState` answer from the slice you are looking at, so
-  ray traces like Jade's, particles, shadows and the camera's water check see 4D blocks.
+  ray traces like Jade's, particles, shadows and the camera's water check see 4D blocks. `Level.getBlockEntity`
+  answers for the targeted block too, so mods pick the right tooltip providers.
+* **Jade's server data** works: chest and furnace contents, spawner mobs, beehives, modded machines. The client
+  tells the server which 4D block its crosshair is on, and while Jade's server side answers, vanilla block and
+  block-entity access is mapped to the 4D world around that block, so every Jade provider (Jade's own and other
+  mods') reads the real block entity. This only needs Jade's ordinary request; nothing else changes.
 * The vanilla block outline is replaced by Tetraform's own (via `ExtractBlockOutlineRenderStateEvent`), since only
   Tetraform knows the block's cut through the slice.
 
@@ -160,11 +166,24 @@ world. Using an item in the air works the same way, in your own slice. So it all
 
 ## Survival in 4D
 
-* **Nether portals:** build the obsidian frame in an x-y or z-y plane of your slice and light it. Travel uses
-  vanilla's 8:1 scaling; coming back, vanilla finds (or builds) the exit portal in the W layer you left from.
+* **Nether portals:** build the obsidian frame in the x-y, z-y **or w-y** plane and light it (a frame turned a
+  quarter turn into W works too). Travel uses vanilla's 8:1 scaling on x, z **and W**, and links to an existing
+  portal nearby in 4D before building a new one.
+* **The Nether is 4D:** netherrack caverns carved by 4D noise between bedrock floor and roof, a lava sea at y 31,
+  glowstone, quartz, nether gold and ancient debris, and the five biomes as regions of (x, z, w): nether wastes,
+  crimson and warped forests (with huge fungi), soul sand valleys and basalt deltas. Their vanilla mobs spawn there
+  (ghasts, piglins, hoglins, zombified piglins, magma cubes...).
+* **Nether fortresses** are 4D: a nether brick hall with bridges out along ±x, ±z and ±w, each ending in a room.
+  Every fortress has at least two blaze spawner rooms, a nether wart room and `nether_bridge` loot chests, and
+  blazes and wither skeletons spawn inside.
 * **The End:** stronghold portal rooms generate underground (fully 4D rooms with a lava pool, twelve frames and a
   silverfish spawner). An eye of ender flies toward the nearest one, and the remaining distance along W is shown
-  above the hotbar. Fill the frames and vanilla opens the portal; the End itself is vanilla.
+  above the hotbar. Fill the frames and vanilla opens the portal.
+* **The End is 4D:** a 4D main island with vanilla's ten obsidian spikes (same places, heights and cages as
+  vanilla) standing as 4D pillars, each with its crystal. You arrive on vanilla's obsidian platform in the W = 0
+  layer, where the dragon fight happens: vanilla's own fight logic builds the exit portal, egg and gateways there.
+  Past the void gap, outer islands float everywhere beyond 1000 blocks (in 4D distance) with chorus plants and
+  **end cities** built by vanilla's end city generator (shulkers, loot, and the ship with its elytra).
   `/locate structure minecraft:stronghold` also works.
 * **Dungeons:** mossy cobblestone rooms (4D, so closed along W too) with a zombie, skeleton or spider spawner and
   two chests with vanilla's dungeon loot. Village chests get their vanilla loot tables too.
@@ -199,8 +218,8 @@ mouse button. They work out of the box:
 | Default | Action |
 |---|---|
 | Hold **Left Alt** + **scroll wheel** | Rotate into W, 5° per notch. While the modifier is held, scrolling does **not** change the hotbar slot. |
-| **Mouse button 5** / **Mouse button 4** (side buttons) | Smoothly rotate toward +W / −W while held (60°/s). These are optional; if your mouse has no side buttons, rebind them, e.g. to `G` / `H`. |
-| `Z` / `X` / `C` / `B` | Snap the W rotation to 270° ("left"), 0° ("forward"), 90° ("right"), 180° ("backward") |
+| **Mouse button 5** / **Mouse button 4** (side buttons) | Snap to the next quarter-turn view, cycling X → Z → B → C (forward) or X → C → B → Z (back). From between two views, forward snaps to the Z side and back to the X side. If your mouse has no side buttons, rebind them, e.g. to `G` / `H`. |
+| `Z` / `X` / `C` / `B` | Snap the W rotation to 270° ("left", facing −W), 0° ("forward", +X), 90° ("right", +W), 180° ("backward", −X) |
 | `R` / `V` | Strafe ana / kata along the hidden axis. Like A/D, this follows your view: from the spawn orientation it is +W / −W, and it turns with the zw rotation. |
 | Middle click | Pick block (vanilla rules: hotbar, then inventory, then creative supply) |
 | Left / right click a creature | Vanilla attack and interaction: breeding, trading, shearing, milking, riding… |
@@ -235,7 +254,7 @@ the mod jar. You must be logged in to GitHub to download artifacts.
 To build locally:
 
 ```
-./gradlew build            # -> build/libs/tetraform-0.1.0.jar (needs JDK 25)
+./gradlew build            # -> build/libs/tetraform-0.3.5.jar (needs JDK 25)
 ./gradlew test             # 4D math tests
 ./gradlew runClient        # optional: -PautoJoin=host:port
 ./gradlew runServer
@@ -245,7 +264,8 @@ To build locally:
 
 * Pistons and other blocks that move blocks only act within one slice. Vanilla redstone components (repeaters,
   comparators, observers) work inside a slice and read 4D dust, but the 4D dust doesn't take power from them yet.
-* Nether portals and end portals must be built in an x-y or z-y plane of a slice (vanilla's frame check is 3D).
+* Nether portals work in the x-y, z-y and w-y planes; tilted frames (at an in-between zw angle) don't light.
+  End portal frames must be in an x-z plane, as in vanilla.
 * Non-cube shapes are lifted to hyperboxes (slabs span the full W range; torches and posts are thin in W),
   rendered with the face sprite of their model. They are not rendered with their full 3D model.
 * Lighting is approximate: sky light uses the 4D canopy and spreads up to 4 blocks sideways, and block light
@@ -256,8 +276,10 @@ To build locally:
   moment after nearby terrain (empty until then, never stale).
 * Villages generated before this version keep their bare dirt street tiles (template air used to be written into
   the terrain); new terrain is generated correctly.
-* Jade and similar mods see blocks and creatures through vanilla's own state, but server-side details (chest
-  contents, furnace progress) don't reach them yet, because the server's vanilla chunks don't hold 4D blocks.
+* WTHIT and other tooltip mods see blocks and creatures through vanilla's client state; only Jade's server data
+  is bridged so far.
+* Nether biomes are 4D regions, but the client's vanilla biome (fog colour, ambient particles, music) is nether
+  wastes everywhere. Bastions and ruined portals don't generate in the Nether yet.
 * Upgrading from 0.1.0: the key-binding ids changed so the new defaults apply; earlier custom bindings for
   Tetraform keys need to be set again.
 * Worlds created before this version can contain caves that open into lakes, and those can still flood if

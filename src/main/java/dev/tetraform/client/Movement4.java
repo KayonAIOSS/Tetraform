@@ -136,7 +136,7 @@ public final class Movement4 {
 
         AABB4 box = AABB4.ofCenterBottom(pos, 0.3, sneaking ? 1.5 : 1.8);
         Physics4.Result r = player.isSpectator() ? new Physics4.Result(new Vec4(vx, vy, vz, vw), false, false, false)
-                : Physics4.move(ClientState4.LEVEL, box, new Vec4(vx, vy, vz, vw), flying ? 0 : 0.6, ground);
+                : Physics4.move(ClientState4.LEVEL, box, new Vec4(vx, vy, vz, vw), flying ? 0 : 0.6, ground, ClientState4.FRAME);
         Vec4 d = r.delta();
         ClientState4.pos = pos.add(d);
         ClientState4.onGround = r.onGround();
@@ -202,7 +202,7 @@ public final class Movement4 {
         }
         vx *= 0.99; vy *= 0.98; vz *= 0.99; vw *= 0.99;
         AABB4 box = AABB4.ofCenterBottom(pos, 0.3, 0.6);
-        Physics4.Result r = Physics4.move(ClientState4.LEVEL, box, new Vec4(vx, vy, vz, vw), 0, false);
+        Physics4.Result r = Physics4.move(ClientState4.LEVEL, box, new Vec4(vx, vy, vz, vw), 0, false, ClientState4.FRAME);
         Vec4 d = r.delta();
         ClientState4.pos = pos.add(d);
         ClientState4.onGround = r.onGround();

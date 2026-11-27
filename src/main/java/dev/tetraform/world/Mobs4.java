@@ -41,6 +41,38 @@ public final class Mobs4 {
             new Spawn(EntityTypes.CHICKEN, 10, 4, 4), new Spawn(EntityTypes.COW, 8, 4, 4),
             new Spawn(EntityTypes.HORSE, 5, 2, 6), new Spawn(EntityTypes.DONKEY, 1, 1, 3));
 
+    // vanilla Nether biome and fortress spawn lists, and the End's
+    private static final List<Spawn> NETHER_WASTES = List.of(
+            new Spawn(EntityTypes.GHAST, 50, 4, 4), new Spawn(EntityTypes.ZOMBIFIED_PIGLIN, 100, 4, 4),
+            new Spawn(EntityTypes.MAGMA_CUBE, 2, 4, 4), new Spawn(EntityTypes.ENDERMAN, 1, 4, 4), new Spawn(EntityTypes.PIGLIN, 15, 4, 4));
+    private static final List<Spawn> CRIMSON_FOREST = List.of(
+            new Spawn(EntityTypes.ZOMBIFIED_PIGLIN, 1, 2, 4), new Spawn(EntityTypes.HOGLIN, 9, 3, 4), new Spawn(EntityTypes.PIGLIN, 5, 3, 4));
+    private static final List<Spawn> WARPED_FOREST = List.of(new Spawn(EntityTypes.ENDERMAN, 1, 4, 4));
+    private static final List<Spawn> SOUL_SAND_VALLEY = List.of(
+            new Spawn(EntityTypes.SKELETON, 20, 5, 5), new Spawn(EntityTypes.GHAST, 50, 4, 4), new Spawn(EntityTypes.ENDERMAN, 1, 4, 4));
+    private static final List<Spawn> BASALT_DELTAS = List.of(new Spawn(EntityTypes.GHAST, 40, 1, 1), new Spawn(EntityTypes.MAGMA_CUBE, 100, 2, 5));
+    private static final List<Spawn> FORTRESS = List.of(
+            new Spawn(EntityTypes.BLAZE, 10, 2, 3), new Spawn(EntityTypes.ZOMBIFIED_PIGLIN, 5, 4, 4),
+            new Spawn(EntityTypes.WITHER_SKELETON, 8, 5, 5), new Spawn(EntityTypes.SKELETON, 2, 5, 5), new Spawn(EntityTypes.MAGMA_CUBE, 3, 4, 4));
+    private static final List<Spawn> END = List.of(new Spawn(EntityTypes.ENDERMAN, 10, 4, 4));
+
+    private static List<Spawn> hostileList(ServerWorld4 w, int x, int y, int z, int ww) {
+        return switch (w.kind) {
+            case NETHER -> {
+                if (Fortress4.inside(w.generator().seed(), x, y, z, ww)) yield FORTRESS;
+                yield switch (w.generator().nether().biome(x, z, ww)) {
+                    case CRIMSON -> CRIMSON_FOREST;
+                    case WARPED -> WARPED_FOREST;
+                    case SOUL_VALLEY -> SOUL_SAND_VALLEY;
+                    case DELTAS -> BASALT_DELTAS;
+                    default -> NETHER_WASTES;
+                };
+            }
+            case END -> END;
+            default -> HOSTILE;
+        };
+    }
+
     public static final double CAP_RADIUS = 128;
 
     private static Spawn pick(List<Spawn> list, net.minecraft.util.RandomSource r) {
@@ -126,11 +158,12 @@ public final class Mobs4 {
         int x = (int) Math.floor(pp.x() + r * Math.cos(th) * dist), z = (int) Math.floor(pp.z() + u * dist),
                 ww = (int) Math.floor(pp.w() + r * Math.sin(th) * dist);
         Level4 l = w.level();
+        if (!hostile && w.kind != dev.tetraform.Tetraform.Kind.OVERWORLD) return 0;
         if (!l.isLoaded(x, z, ww)) return 0;
         int surface = l.heightAt(x, z, ww);
         // hostiles anywhere from bedrock to the surface (caves included), animals on the surface
         int y = hostile ? 1 + rnd.nextInt(Math.max(1, surface)) : surface;
-        Spawn s = pick(hostile ? HOSTILE : PASSIVE, rnd);
+        Spawn s = pick(hostile ? hostileList(w, x, y, z, ww) : PASSIVE, rnd);
         int max = hostile ? s.max : (int) Math.round(s.max * Config4.PASSIVE_GROUP_SCALE.get());
         int n = s.min + (max > s.min ? rnd.nextInt(max - s.min + 1) : 0);
         int spawned = 0;
@@ -141,7 +174,16 @@ public final class Mobs4 {
             int sy = hostile ? findFloor(l, sx, y, sz, sw) : l.heightAt(sx, sz, sw);
             if (sy < 1 || !spot(w, sx, sy, sz, sw, hostile)) continue;
             Entity e = w.spawn(s.type, new Vec4(sx + 0.5, sy, sz + 0.5, sw + 0.5), EntitySpawnReason.NATURAL);
-            if (e != null) spawned++;
+            if (e == null) continue;
+            // big mobs (ghasts, hoglins) need the room vanilla checks for
+            if (e.getBbWidth() > 1.0f || e.getBbHeight() > 2.0f) {
+                final Entity fe = e;
+                if (!Access4.inSlice(w, sw + 0.5, () -> w.serverLevel().noCollision(fe))) {
+                    e.discard();
+                    continue;
+                }
+            }
+            spawned++;
         }
         return spawned;
     }
@@ -165,6 +207,8 @@ public final class Mobs4 {
         BlockState feet = l.getBlock(x, y, z, ww), head = l.getBlock(x, y + 1, z, ww), floor = l.getBlock(x, y - 1, z, ww);
         if (!feet.isAir() || !head.isAir() || !solid(floor)) return false;
         boolean sky = y >= l.heightAt(x, z, ww);
+        if (w.kind == dev.tetraform.Tetraform.Kind.NETHER) return w.blockLight(x, y, z, ww) <= 11;
+        if (w.kind == dev.tetraform.Tetraform.Kind.END) return true;
         if (hostile) {
             // monsters need block light 0, and outdoors also a dark sky
             if (w.blockLight(x, y, z, ww) > 0) return false;

@@ -99,6 +99,12 @@ public final class ServerEvents4 {
         if (event.getLevel().isClientSide() || !Tetraform.is4D(event.getLevel()) || W4.has(e)) return;
         // spawned by something running in a slice (a spawner, breeding, a block, a mob's own tick): that slice's W
         Access4.Mapper ctx = Access4.serverContext();
+        if (ctx == null && (e instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon
+                || e instanceof net.minecraft.world.entity.boss.enderdragon.EndCrystal)) {
+            // a dragon or spike crystal saved by the End before it became 4D: the 4D End has its own
+            event.setCanceled(true);
+            return;
+        }
         if (ctx != null && !(e instanceof ServerPlayer)) {
             W4.set(e, ctx.w());
             return;

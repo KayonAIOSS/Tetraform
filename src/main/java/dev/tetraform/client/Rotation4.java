@@ -13,16 +13,25 @@ public final class Rotation4 {
 
     /** Degrees per scroll notch (the reference camera uses 0.08 rad, about 4.6 degrees). */
     public static final double SCROLL_STEP_DEG = 5.0;
-    /** Degrees per tick for the held smooth-turn buttons (60 degrees per second). */
-    public static final double SMOOTH_DEG_PER_TICK = 3.0;
 
     public static void tick(LocalPlayer player) {
         if (Keys4.SNAP_270.consumeClick()) ClientState4.setZW(Math.toRadians(270));
         if (Keys4.SNAP_0.consumeClick()) ClientState4.setZW(0);
         if (Keys4.SNAP_90.consumeClick()) ClientState4.setZW(Math.toRadians(90));
         if (Keys4.SNAP_180.consumeClick()) ClientState4.setZW(Math.toRadians(180));
-        int dir = (Keys4.ROTATE_ANA.isDown() ? 1 : 0) - (Keys4.ROTATE_KATA.isDown() ? 1 : 0);
-        if (dir != 0) ClientState4.setZW(ClientState4.zw + Math.toRadians(SMOOTH_DEG_PER_TICK * dir));
+        while (Keys4.ROTATE_ANA.consumeClick()) ClientState4.setZW(nextQuarter(ClientState4.zw, -1));
+        while (Keys4.ROTATE_KATA.consumeClick()) ClientState4.setZW(nextQuarter(ClientState4.zw, 1));
+    }
+
+    /**
+     * The next quarter-turn angle strictly past {@code angle} in direction {@code dir}: -1 steps 0 &rarr; 270
+     * &rarr; 180 &rarr; 90 (the X, Z, B, C views), +1 the other way. From in between two views it lands on the
+     * nearer one in that direction.
+     */
+    public static double nextQuarter(double angle, int dir) {
+        double q = angle / (Math.PI / 2);
+        double n = dir < 0 ? Math.ceil(q - 1.0E-6) - 1 : Math.floor(q + 1.0E-6) + 1;
+        return n * (Math.PI / 2);
     }
 
     /** Modifier + scroll rotates into W instead of changing the selected hotbar slot. */

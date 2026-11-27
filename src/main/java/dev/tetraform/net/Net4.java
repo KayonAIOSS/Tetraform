@@ -131,6 +131,23 @@ public final class Net4 {
     public static final byte ACTION_BREAK = 0, ACTION_PLACE = 1, ACTION_USE = 2, ACTION_ATTACK = 3, ACTION_PICK = 4, ACTION_USE_ENTITY = 5;
 
     /** hitX/Y/Z: where on the block the crosshair hit, in [0, 1] block-local x, y, z (vanilla uses it for slabs, stairs...). */
+    /**
+     * The 4D block under the client's crosshair and the vanilla (render-space) cell it is shown at. Lets the server
+     * answer mods that ask about "the block at this position" from the client's view (Jade's server data).
+     */
+    public record Look4C2S(boolean has, int rx, int ry, int rz, int x, int y, int z, int w) implements CustomPacketPayload {
+        public static final Type<Look4C2S> TYPE = typeOf("look4");
+        public static final StreamCodec<RegistryFriendlyByteBuf, Look4C2S> CODEC = StreamCodec.of(
+                (buf, v) -> {
+                    buf.writeBoolean(v.has);
+                    buf.writeVarInt(v.rx); buf.writeVarInt(v.ry); buf.writeVarInt(v.rz);
+                    buf.writeVarInt(v.x); buf.writeVarInt(v.y); buf.writeVarInt(v.z); buf.writeVarInt(v.w);
+                },
+                buf -> new Look4C2S(buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
+                        buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record Action4C2S(byte action, int x, int y, int z, int w, byte face, int entityId, float hitX, float hitY, float hitZ) implements CustomPacketPayload {
         public static final Type<Action4C2S> TYPE = typeOf("action4");
         public static final StreamCodec<RegistryFriendlyByteBuf, Action4C2S> CODEC = StreamCodec.of(
@@ -179,6 +196,13 @@ public final class Net4 {
         });
         r.playToServer(Move4C2S.TYPE, Move4C2S.CODEC, (p, ctx) -> {
             if (ctx.player() instanceof ServerPlayer sp) ServerWorld4.handleMove(sp, p);
+        });
+        r.playToServer(Look4C2S.TYPE, Look4C2S.CODEC, (p, ctx) -> {
+            if (ctx.player() instanceof ServerPlayer sp) {
+                var st = ServerWorld4.state(sp);
+                st.lookRender = p.has() ? new net.minecraft.core.BlockPos(p.rx(), p.ry(), p.rz()) : null;
+                st.look4 = p.has() ? new dev.tetraform.math.BlockPos4(p.x(), p.y(), p.z(), p.w()) : null;
+            }
         });
         r.playToServer(Action4C2S.TYPE, Action4C2S.CODEC, (p, ctx) -> {
             if (ctx.player() instanceof ServerPlayer sp) ServerWorld4.handleAction(sp, p);

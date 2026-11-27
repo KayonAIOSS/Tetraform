@@ -20,7 +20,11 @@
     "Portals4Mixin",
     "PortalForcer4Mixin",
     "Strongholds4Mixin",
-    "LightAccess4Mixin"
+    "LightAccess4Mixin",
+    "JadeServer4Mixin",
+    "WorldGen4Mixin",
+    "EndPortal4Mixin",
+    "DragonFight4Mixin"
   ],
   "client": [
     "ClientInputAccessor",
